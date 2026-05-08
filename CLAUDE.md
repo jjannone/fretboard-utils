@@ -3,16 +3,9 @@
 ## Demo / example output
 
 ### Human readability
-- Always print a **visible separator line** (e.g. `─` × 52) before and after each diagram.
-  Blank lines alone are stripped by the markdown renderer and do not work.
-- Use this pattern in every demo script:
-  ```python
-  SEP = '\n' + '─' * 52 + '\n'
-  print(SEP)
-  print(diagram)
-  # ... after last diagram:
-  print(SEP)
-  ```
+- Output each diagram in its **own separate markdown code block** in the response.
+  Blank lines between diagrams are stripped by the renderer; separator lines are ugly.
+  A new ``` fence between each diagram is the only reliable visual break.
 
 ### Pattern variety
 - **Interval size**: semitones (m2) and whole tones (M2) are fine and often more interesting
