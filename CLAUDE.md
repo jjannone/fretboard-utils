@@ -3,8 +3,16 @@
 ## Demo / example output
 
 ### Human readability
-- Always print **at least two blank lines** between diagrams when listing multiple patterns.
-- Never run diagrams back-to-back with a single blank line or no separator.
+- Always print a **visible separator line** (e.g. `─` × 52) before and after each diagram.
+  Blank lines alone are stripped by the markdown renderer and do not work.
+- Use this pattern in every demo script:
+  ```python
+  SEP = '\n' + '─' * 52 + '\n'
+  print(SEP)
+  print(diagram)
+  # ... after last diagram:
+  print(SEP)
+  ```
 
 ### Pattern variety
 - **Interval size**: semitones (m2) and whole tones (M2) are fine and often more interesting
