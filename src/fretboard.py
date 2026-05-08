@@ -11,12 +11,15 @@ Provides:
 
 Diagram convention:
   - 6 lines, high e on top, low E on bottom
-  - Each line prefixed with string letter + '|'
-  - Column position == actual fret position on the neck
-  - Adjacent frets squeeze together (e.g., '67', '78')
-  - Non-adjacent frets use plain ASCII dashes between them
+  - Each line: {string_letter}{config_char}{body}|
+      config_char = '|'  normal string, fretted only (backward-compatible)
+                  = 'X'  normal string, fretted only (explicit annotation)
+                  = '0'  open string (fret 0 is playable)
+                  = 'N'  spider capo at fret N (single digit, 1-9)
+  - Column position in body == actual fret position on the neck
+  - Digit shown = fret % 10; column is authoritative for actual fret
+  - Adjacent frets squeeze together (e.g., '67', '90')
   - Plain ASCII '-' only (never em/en dash)
-  - Patterns transposed so lowest fret >= 3
 """
 
 import re
@@ -107,18 +110,18 @@ def note_name(string_name: str, fret: int) -> str:
 # Diagram parsing & rendering
 # ---------------------------------------------------------------------------
 
-DIAGRAM_LINE_RE = re.compile(r'^([EADGBe])(\|?)(.*?)\|?$')
+DIAGRAM_LINE_RE = re.compile(r'^([EADGBe])([|0-9Xx]?)(.*?)\|?$')
 
 
 def parse_diagram(diagram: str):
     """
     Parse a diagram into list of (string_name, fret, column) tuples.
 
-    Convention:
-      - Each digit is a fret value (single-digit: 0-9)
-      - Adjacent digits like '67' = fret 6 + fret 7 (two notes)
-      - Two-digit frets (10-24) must be wrapped in parens: '(10)', '(12)'
-        because '10' is ambiguous with fret-1 + fret-0.
+    Line format: {letter}{config_char}{body}|
+      config_char: '|' normal, digit = capo fret,
+                  '0' = open string, 'X'/'x' = normal fretted (no open).
+    Column index in body is authoritative for fret value (fret = column).
+    All strings with a body are parsed regardless of config_char.
     """
     notes = []
     for line in diagram.strip().split('\n'):
@@ -129,25 +132,10 @@ def parse_diagram(diagram: str):
         if not m:
             continue
         string_name = m.group(1)
-        rest = m.group(2) + m.group(3)
-        i = 0
-        while i < len(rest):
-            ch = rest[i]
-            if ch == '(':
-                # multi-digit fret in parens, e.g. (10), (12)
-                end = rest.find(')', i)
-                if end > i:
-                    fret_str = rest[i+1:end]
-                    if fret_str.isdigit():
-                        notes.append((string_name, int(fret_str), i))
-                    i = end + 1
-                    continue
-                else:
-                    i += 1
-                    continue
+        body = m.group(3)
+        for i, ch in enumerate(body):
             if ch.isdigit():
-                notes.append((string_name, int(ch), i))
-            i += 1
+                notes.append((string_name, i, i))
     return notes
 
 
@@ -181,86 +169,152 @@ def verify(diagram: str, root_name: str, scale_name: str,
 # ---------------------------------------------------------------------------
 
 def frets_in_scale(string_name: str, pitches: set,
-                   fret_min: int = 3, fret_max: int = 15):
-    """All frets on this string (within range) that play a pitch in the scale."""
+                   fret_min: int = 3, fret_max: int = 15,
+                   capo_fret: int = None):
+    """All frets on this string that play a pitch in the scale.
+
+    capo_fret: if given, only frets strictly above the capo are searched
+    (capo_fret+1 to fret_max). The capo tone itself is always ringing as a
+    drone and is shown in the prefix, so it is not a candidate body note.
+    capo_fret=0 (open string) is the exception: fret 0 is a valid body note.
+    """
     open_pc = OPEN_STRINGS[string_name]
+    if capo_fret is not None:
+        low = 0 if capo_fret == 0 else capo_fret + 1
+        return [f for f in range(low, fret_max + 1)
+                if (open_pc + f) % 12 in pitches]
     return [f for f in range(fret_min, fret_max + 1)
             if (open_pc + f) % 12 in pitches]
 
 
-def pick_pair(frets, prev_low=None, max_stretch: int = 4):
+def pick_pair(frets, target=None, min_stretch: int = 0, max_stretch: int = 5):
     """
-    Pick a pair of consecutive in-scale frets.
-    Prefers smaller stretch and proximity to prev_low.
+    Pick a pair of in-scale frets where stretch is in [min_stretch, max_stretch].
+    Primary sort: proximity of f1 to target.
+    Tiebreak: prefer larger stretch (bolder interval).
+    Falls back to min_stretch=0 if nothing qualifies.
     """
     candidates = []
-    for i in range(len(frets) - 1):
-        f1, f2 = frets[i], frets[i + 1]
-        stretch = f2 - f1
-        if stretch <= max_stretch:
-            score = stretch
-            if prev_low is not None:
-                score += abs(f1 - prev_low) * 0.5
-            candidates.append((score, f1, f2))
+    for i in range(len(frets)):
+        for j in range(i + 1, len(frets)):
+            f1, f2 = frets[i], frets[j]
+            stretch = f2 - f1
+            if stretch > max_stretch:
+                break
+            if stretch < min_stretch:
+                continue
+            proximity = abs(f1 - target) if target is not None else 0
+            candidates.append((proximity, -stretch, f1, f2))  # -stretch: prefer wider
     if not candidates:
         return None
     candidates.sort()
-    return (candidates[0][1], candidates[0][2])
+    return candidates[0][2], candidates[0][3]
 
 
-def generate_2nps(root_name: str, scale_name: str, start_fret: int = 3):
-    """Generate a 2-note-per-string pattern starting around start_fret."""
+def generate_2nps(root_name: str, scale_name: str, start_fret: int = 3,
+                  min_stretch: int = 0, max_stretch: int = 5,
+                  direction: str = 'up', position_shift: float = 0,
+                  string_configs: dict = None):
+    """Generate a 2-note-per-string pattern.
+
+    direction='up'  : classic ascending box — fret floor rises with prev pair.
+    direction='free': each string targets start_fret + string_index * position_shift,
+                      searching the full neck. Positive position_shift moves up the
+                      neck (higher frets); negative moves down. A position_shift of
+                      ~1.5 spans ~8 frets across all 6 strings.
+
+    min_stretch / max_stretch: fret span of the chosen pair on each string.
+    Set min_stretch=3 to force intervals of a minor 3rd or larger (up to P4 at 5).
+
+    string_configs: optional dict mapping string name -> int, 'X', or None.
+      None  = excluded (string skipped entirely, not rendered).
+      'X'   = normal fretted string, rendered with 'X' prefix.
+      0     = open string (fret 0 is a candidate note).
+      N > 0 = spider capo at fret N (capo position is a candidate note;
+              frets above the capo are also searched).
+    Strings absent from string_configs are treated normally.
+    """
     pitches = scale_pitches(root_name, scale_name)
     pattern = {}
     prev_low = start_fret
-    for s in STRING_ORDER_LOW_TO_HIGH:
-        frets = frets_in_scale(s, pitches, fret_min=max(3, start_fret - 1))
-        pair = pick_pair(frets, prev_low=prev_low)
-        if pair is None:
+
+    for idx, s in enumerate(STRING_ORDER_LOW_TO_HIGH):
+        capo_fret = None
+        if string_configs and s in string_configs:
+            val = string_configs[s]
+            if val is None:
+                continue  # excluded string
+            if val != 'X':
+                capo_fret = val  # int: 0 = open, N = capo at fret N
+            # 'X' falls through to normal fretted logic below
+
+        if capo_fret is not None:
+            target = start_fret + idx * position_shift if direction == 'free' else prev_low
+            frets = frets_in_scale(s, pitches, capo_fret=capo_fret)
+        elif direction == 'up':
+            target = prev_low
+            frets = frets_in_scale(s, pitches, fret_min=max(3, prev_low - 1))
+        else:
+            target = start_fret + idx * position_shift
             frets = frets_in_scale(s, pitches, fret_min=3)
-            pair = pick_pair(frets, prev_low=prev_low)
+
+        pair = pick_pair(frets, target=target, min_stretch=min_stretch, max_stretch=max_stretch)
+        if pair is None and min_stretch > 0:
+            pair = pick_pair(frets, target=target, min_stretch=0, max_stretch=max_stretch)
+        if pair is None:
+            frets_full = frets_in_scale(s, pitches,
+                                        fret_min=3 if capo_fret is None else capo_fret,
+                                        capo_fret=capo_fret)
+            pair = pick_pair(frets_full, target=target, min_stretch=0, max_stretch=max_stretch)
         if pair is None:
             return None
+
         pattern[s] = pair
         prev_low = pair[0]
+
     return pattern
 
 
-def render(pattern: dict, label: str = "", width: int = 20) -> str:
+def render(pattern: dict, label: str = "", width: int = 20,
+           string_configs: dict = None) -> str:
     """Render a {string: (f1, f2)} pattern as a fretboard-faithful diagram.
 
-    Two-digit frets (10+) are wrapped in parens: (10), (12), etc.
-    Width should be at least max_fret + 4 to fit padding.
-    """
-    # Auto-size width if needed
-    max_fret = max(max(p) for p in pattern.values())
-    needed = max_fret + 4
-    if width < needed:
-        width = needed
+    Every fret is rendered as a single digit equal to fret % 10.
+    Column position is authoritative for the actual fret.
 
-    def fret_token(f: int) -> str:
-        return f"({f})" if f >= 10 else str(f)
+    string_configs: if given, drives the config char in each prefix.
+      None -> 'X' with all-dash body (excluded, not generated)
+      'X'  -> 'X' prefix, normal fretted body
+      0    -> '0' (open string)
+      N    -> str(N) (capo at fret N)
+    Strings absent from string_configs use '|' (normal).
+    """
+    if pattern:
+        max_fret = max(max(p) for p in pattern.values())
+        needed = max_fret + 4
+        if width < needed:
+            width = needed
 
     lines = []
     for s in STRING_ORDER_DISPLAY:
+        if string_configs and s in string_configs and string_configs[s] is None:
+            chars = ['-'] * width
+            chars[0] = ' '
+            lines.append(f"{s}X" + ''.join(chars) + "|")
+            continue
+
+        config_char = '|'
+        if string_configs and s in string_configs:
+            val = string_configs[s]
+            config_char = 'X' if val == 'X' else str(val)
+
         f1, f2 = pattern[s]
         chars = ['-'] * width
-        t1 = fret_token(f1)
-        t2 = fret_token(f2)
-        # Place t1 at column f1, t2 at column f2
-        # If f2 == f1 + 1 and both single-digit, squeeze them adjacent
-        if f2 == f1 + 1 and len(t1) == 1 and len(t2) == 1:
-            chars[f1] = t1
-            chars[f1 + 1] = t2
-        else:
-            # Place each token starting at its fret column
-            for j, c in enumerate(t1):
-                if f1 + j < width:
-                    chars[f1 + j] = c
-            for j, c in enumerate(t2):
-                if f2 + j < width:
-                    chars[f2 + j] = c
-        lines.append(f"{s}|" + ''.join(chars) + "|")
+        chars[0] = ' '
+        chars[f1] = str(f1 % 10)
+        chars[f2] = str(f2 % 10)
+        lines.append(f"{s}{config_char}" + ''.join(chars) + "|")
+
     out = '\n'.join(lines)
     if label:
         out += f"  {label}"
@@ -269,14 +323,42 @@ def render(pattern: dict, label: str = "", width: int = 20) -> str:
 
 def generate_and_render(root_name: str, scale_name: str,
                         label: str = None, start_fret: int = 3,
+                        min_stretch: int = 0, max_stretch: int = 5,
+                        direction: str = 'up', position_shift: float = 0,
+                        string_configs: dict = None,
                         width: int = 18) -> str:
     """One-shot: generate a verified 2NPS diagram or raise on failure."""
-    pattern = generate_2nps(root_name, scale_name, start_fret=start_fret)
+    if string_configs:
+        capo_frets = {v for v in string_configs.values()
+                      if isinstance(v, int) and v > 0}
+        if len(capo_frets) > 1:
+            raise ValueError(
+                f"Spider capo can only be on one fret; got {sorted(capo_frets)}")
+    pattern = generate_2nps(root_name, scale_name, start_fret=start_fret,
+                            min_stretch=min_stretch, max_stretch=max_stretch,
+                            direction=direction, position_shift=position_shift,
+                            string_configs=string_configs)
     if pattern is None:
         raise RuntimeError(f"Could not generate {root_name} {scale_name}")
     if label is None:
         label = f"{root_name} {scale_name.replace('_', ' ').title()}"
-    diagram = render(pattern, label, width=width)
+    diagram = render(pattern, label, width=width, string_configs=string_configs)
     if not verify(diagram, root_name, scale_name, label):
         raise RuntimeError(f"Generated diagram failed verification: {label}")
     return diagram
+
+
+def side_by_side(left: str, left_label: str,
+                 right: str, right_label: str,
+                 gap: int = 4) -> str:
+    """Render two diagrams side by side with labels centered below each."""
+    l_lines = left.split('\n')
+    r_lines = right.split('\n')
+    l_w = max(len(line) for line in l_lines)
+    r_w = max(len(line) for line in r_lines)
+    n = max(len(l_lines), len(r_lines))
+    l_lines += [''] * (n - len(l_lines))
+    r_lines += [''] * (n - len(r_lines))
+    rows = [l.ljust(l_w) + ' ' * gap + r for l, r in zip(l_lines, r_lines)]
+    rows.append(left_label.center(l_w) + ' ' * gap + right_label.center(r_w))
+    return '\n'.join(rows)

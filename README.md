@@ -29,7 +29,7 @@ Conventions:
 - Plain ASCII hyphen-minus `-` only — never em dash `—` or en dash `–`
 - Lines padded to align at the closing `|`
 - Patterns transposed so the lowest fret is ≥ 3 (no open strings)
-- Two-digit frets (10+) wrapped in parens: `(10)`, `(12)`
+- Two-digit frets rendered as `fret % 10` (10 → `0`, 11 → `1`, 12 → `2`, …); column position is authoritative
 
 ## Why this exists
 

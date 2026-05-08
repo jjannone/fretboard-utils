@@ -78,11 +78,18 @@ identity may change (different root) but the fingering pattern is the same.
 
 ## Two-digit frets
 
-Frets 10 and above are wrapped in parens: `(10)`, `(12)`. This avoids ambiguity
-between e.g. fret 10 and the digit pair "1 then 0".
+Frets 10 and above are rendered as a single digit equal to `fret % 10`:
+fret 10 → `0`, 11 → `1`, 12 → `2`, 13 → `3`, and so on. The displayed digit
+is cosmetic — **column position is authoritative for the actual fret**, so
+a `0` in column 10 means fret 10, a `3` in column 13 means fret 13.
+
+This works because the convention forbids open strings (lowest fret ≥ 3),
+so a digit at columns 0–2 never appears and there's no collision with
+single-digit frets 0–2.
 
 ```
-G|---------9(10)----|
+G|----------90------|     <- frets 9 and 10 on G
+e|------------23----|     <- frets 12 and 13 on e
 ```
 
 ## What this is NOT
