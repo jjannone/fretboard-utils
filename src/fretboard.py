@@ -134,6 +134,8 @@ def parse_diagram(diagram: str):
         string_name = m.group(1)
         body = m.group(3)
         for i, ch in enumerate(body):
+            if ch == '|':
+                break
             if ch.isdigit():
                 notes.append((string_name, i, i))
     return notes
