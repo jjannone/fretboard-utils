@@ -32,11 +32,27 @@ Use `STRETCH_PROFILES` from `fretboard.py` to drive per-string interval variety:
 Mix shapes and profiles: e.g. arch shape + alternating stretch, or sweep + shrinking.
 
 ### Spider capo
-Use spider capo configs in examples. Max physically-sensible fret is 4.
-Capo tones that clash with the scale are *features*, not errors — note them in the label.
+- **Always use spider capo** in generated examples unless the user explicitly says not to.
+- Max physically-sensible capo fret is **4**.
+- Capo tones that clash with the scale are *features*, not errors — note them in the label.
+- **At most one `'X'` string per pattern.** `X` means "fretted normally, no open/capo drone
+  shown"; using more than one dilutes the capo concept and looks like an error.
+- Choose capo fret and which strings get it based on which drone tones are harmonically
+  interesting (in-scale, dissonant, or a mix) — don't default to all-six every time.
+
+## Before generating patterns — READ THIS FILE FIRST
+Before writing any demo or example code, re-read this file in full so all rules are active.
+Checklist:
+- [ ] Each diagram in its own code block
+- [ ] Spider capo used (unless explicitly excluded)
+- [ ] No more than one X string
+- [ ] Intervals varied (not all seconds, not all wide)
+- [ ] Shapes varied across examples (straight, jump, arch, drift, sweep — not all the same)
+- [ ] Stretch profile varies across examples
 
 ### What NOT to do
 - Do not always pick the widest interval available — that produces uniformly safe, timid patterns.
 - Do not always move monotonically up the neck across strings.
-- Do not generate 5 examples that all look structurally identical (same angle, same interval width).
-- Do not omit spider capo variants when generating examples for a scale.
+- Do not generate examples that all look structurally identical (same angle, same interval width).
+- Do not omit spider capo unless asked.
+- Do not use more than one X string in a pattern.
