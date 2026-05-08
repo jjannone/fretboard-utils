@@ -213,10 +213,33 @@ def pick_pair(frets, target=None, min_stretch: int = 0, max_stretch: int = 5):
     return candidates[0][2], candidates[0][3]
 
 
+# Named per-string stretch profiles.  Each maps string name -> (min, max) semitone span.
+# Used with stretch_profile= in generate_2nps.
+STRETCH_PROFILES = {
+    # Uniform
+    'tight':        {s: (0, 2) for s in STRING_ORDER_LOW_TO_HIGH},
+    'wide':         {s: (3, 5) for s in STRING_ORDER_LOW_TO_HIGH},
+    'free':         {s: (0, 5) for s in STRING_ORDER_LOW_TO_HIGH},
+    # Gradient across the neck
+    'bass_tight':   {s: (0, 2) if i < 3 else (3, 5)
+                     for i, s in enumerate(STRING_ORDER_LOW_TO_HIGH)},
+    'bass_wide':    {s: (3, 5) if i < 3 else (0, 2)
+                     for i, s in enumerate(STRING_ORDER_LOW_TO_HIGH)},
+    'growing':      {s: (i, min(i + 2, 5))
+                     for i, s in enumerate(STRING_ORDER_LOW_TO_HIGH)},
+    'shrinking':    {s: (max(0, 4 - i), max(2, 5 - i))
+                     for i, s in enumerate(STRING_ORDER_LOW_TO_HIGH)},
+    # Alternating tight/wide by string
+    'alternating':  {s: (0, 2) if i % 2 == 0 else (3, 5)
+                     for i, s in enumerate(STRING_ORDER_LOW_TO_HIGH)},
+}
+
+
 def generate_2nps(root_name: str, scale_name: str, start_fret: int = 3,
                   min_stretch: int = 0, max_stretch: int = 5,
                   direction: str = 'up', position_shift: float = 0,
-                  string_configs: dict = None):
+                  string_configs: dict = None,
+                  stretch_profile: dict = None):
     """Generate a 2-note-per-string pattern.
 
     direction='up'  : classic ascending box — fret floor rises with prev pair.
@@ -227,6 +250,10 @@ def generate_2nps(root_name: str, scale_name: str, start_fret: int = 3,
 
     min_stretch / max_stretch: fret span of the chosen pair on each string.
     Set min_stretch=3 to force intervals of a minor 3rd or larger (up to P4 at 5).
+
+    stretch_profile: optional dict mapping string name -> (min_stretch, max_stretch).
+      Overrides min_stretch/max_stretch on a per-string basis.  Use STRETCH_PROFILES
+      for named presets or supply your own dict, e.g. {'E': (0,2), 'A': (3,5), ...}.
 
     string_configs: optional dict mapping string name -> int, 'X', or None.
       None  = excluded (string skipped entirely, not rendered).
@@ -241,6 +268,11 @@ def generate_2nps(root_name: str, scale_name: str, start_fret: int = 3,
     prev_low = start_fret
 
     for idx, s in enumerate(STRING_ORDER_LOW_TO_HIGH):
+        mn = min_stretch
+        mx = max_stretch
+        if stretch_profile and s in stretch_profile:
+            mn, mx = stretch_profile[s]
+
         capo_fret = None
         if string_configs and s in string_configs:
             val = string_configs[s]
@@ -260,14 +292,14 @@ def generate_2nps(root_name: str, scale_name: str, start_fret: int = 3,
             target = start_fret + idx * position_shift
             frets = frets_in_scale(s, pitches, fret_min=3)
 
-        pair = pick_pair(frets, target=target, min_stretch=min_stretch, max_stretch=max_stretch)
-        if pair is None and min_stretch > 0:
-            pair = pick_pair(frets, target=target, min_stretch=0, max_stretch=max_stretch)
+        pair = pick_pair(frets, target=target, min_stretch=mn, max_stretch=mx)
+        if pair is None and mn > 0:
+            pair = pick_pair(frets, target=target, min_stretch=0, max_stretch=mx)
         if pair is None:
             frets_full = frets_in_scale(s, pitches,
                                         fret_min=3 if capo_fret is None else capo_fret,
                                         capo_fret=capo_fret)
-            pair = pick_pair(frets_full, target=target, min_stretch=0, max_stretch=max_stretch)
+            pair = pick_pair(frets_full, target=target, min_stretch=0, max_stretch=mx)
         if pair is None:
             return None
 

@@ -20,7 +20,22 @@
 - Vary all of the above *across* a set of examples — if one pattern drifts up, the next
   shouldn't also drift up.
 
+### Stretch profiles
+Use `STRETCH_PROFILES` from `fretboard.py` to drive per-string interval variety:
+- `'tight'` — all strings m2/M2 (0–2)
+- `'wide'`  — all strings m3–P4 (3–5)
+- `'bass_tight'` / `'bass_wide'` — tight or wide on bass three, opposite on treble three
+- `'growing'` / `'shrinking'` — span increases or decreases string by string
+- `'alternating'` — odd/even strings alternate between tight and wide
+
+Mix shapes and profiles: e.g. arch shape + alternating stretch, or sweep + shrinking.
+
+### Spider capo
+Use spider capo configs in examples. Max physically-sensible fret is 4.
+Capo tones that clash with the scale are *features*, not errors — note them in the label.
+
 ### What NOT to do
 - Do not always pick the widest interval available — that produces uniformly safe, timid patterns.
 - Do not always move monotonically up the neck across strings.
 - Do not generate 5 examples that all look structurally identical (same angle, same interval width).
+- Do not omit spider capo variants when generating examples for a scale.
