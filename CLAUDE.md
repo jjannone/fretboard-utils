@@ -35,8 +35,12 @@ Mix shapes and profiles: e.g. arch shape + alternating stretch, or sweep + shrin
 - **Always use spider capo** in generated examples unless the user explicitly says not to.
 - Max physically-sensible capo fret is **4**.
 - Capo tones that clash with the scale are *features*, not errors — note them in the label.
-- **At most one `'X'` string per pattern.** `X` means "fretted normally, no open/capo drone
-  shown"; using more than one dilutes the capo concept and looks like an error.
+- **Never capo all 6 strings at the same fret** — that is just a transposition and should
+  instead be expressed as the equivalent key with no capo.
+  Rule: if capo would go all the way across at fret N, transpose the root DOWN by N semitones
+  and use no capo. Example: G altered + capo 1 all strings → F# (Gb) altered, no capo.
+- **Rarely more than one `'X'` string per pattern**, but this is a guideline not a hard rule.
+  `X` means "fretted normally, no open/capo drone shown on this string."
 - Choose capo fret and which strings get it based on which drone tones are harmonically
   interesting (in-scale, dissonant, or a mix) — don't default to all-six every time.
 
