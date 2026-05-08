@@ -12,9 +12,9 @@ Provides:
 Diagram convention:
   - 6 lines, high e on top, low E on bottom
   - Each line: {string_letter}{config_char}{body}|
-      config_char = '|'  normal string, fretted only (backward-compatible)
-                  = 'X'  normal string, fretted only (explicit annotation)
-                  = '0'  open string (fret 0 is playable)
+      config_char = '0'  normal string, nut position (default)
+                  = '|'  fretted only — explicit "no open, no capo" (unusual)
+                  = 'X'  string muted/bypassed
                   = 'N'  spider capo at fret N (single digit, 1-9)
   - Column position in body == actual fret position on the neck
   - Digit shown = fret % 10; column is authoritative for actual fret
@@ -318,10 +318,11 @@ def render(pattern: dict, label: str = "", width: int = 20,
 
     string_configs: if given, drives the config char in each prefix.
       None -> 'X' with all-dash body (excluded, not generated)
-      'X'  -> 'X' prefix, normal fretted body
-      0    -> '0' (open string)
+      'X'  -> 'X' prefix (string muted/bypassed)
+      '|'  -> '|' prefix (fretted only, no open, no capo — unusual)
+      0    -> '0' (nut position — same as default)
       N    -> str(N) (capo at fret N)
-    Strings absent from string_configs use '|' (normal).
+    Strings absent from string_configs use '0' (normal, nut position).
     """
     if pattern:
         max_fret = max(max(p) for p in pattern.values())
@@ -337,10 +338,10 @@ def render(pattern: dict, label: str = "", width: int = 20,
             lines.append(f"{s}X" + ''.join(chars) + "|")
             continue
 
-        config_char = '|'
+        config_char = '0'
         if string_configs and s in string_configs:
             val = string_configs[s]
-            config_char = 'X' if val == 'X' else str(val)
+            config_char = val if val in ('X', '|') else str(val)
 
         f1, f2 = pattern[s]
         chars = ['-'] * width
