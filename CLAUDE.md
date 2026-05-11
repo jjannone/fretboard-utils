@@ -232,6 +232,15 @@ Mix shapes and profiles: e.g. arch shape + alternating stretch, or sweep + shrin
   For each pair it checks whether **drone + body notes** form a recognised
   triad or 7th chord (see chord naming below). Pairs are ranked by **middle
   -fret proximity to the target** so a pair that straddles the target wins.
+- **drone→f1 constraint**: the lower body note must sit at least a m3 from
+  the drone (allowed range: m3..♭6 = 3..8 semitones). This enforces actual
+  arpeggio character rather than a chromatic cluster around the drone.
+- **Variety bonus**: across the 6 strings of one arpeggio, the picker
+  tracks which chord *types* (interval signatures) and *identities*
+  (pitch-class sets) have already appeared, and subtracts a bonus from the
+  score of unused options — so each string is nudged toward a fresh chord.
+  The bonus is small enough that proximity still dominates for large
+  jumps (won't drag a string halfway up the neck just for variety).
 - Selection priority:
   1. The closest chord-forming pair within `2 * max_stretch` of the target.
   2. A non-chord pair within `max_stretch` of the target — but only if it

@@ -896,34 +896,42 @@ def generate_arpeggio(root_name: str, scale_name: str, start_fret: int = 3,
     Strategy:
       1. Pull from the full scale (not just one chord-tone set) so the picker
          has dense pair options near every position.
-      2. Among 2-note pairs within max_stretch of the target (by middle-fret
-         proximity, so a pair that straddles the target wins), prefer pairs
-         that combine with the string's drone to form a recognised triad or
-         7th chord. This gives chord names for as many strings as possible.
-      3. If no chord-forming pair is reachable, fall back to a non-chord pair
-         within max_stretch. Single notes only when no pair at all fits.
+      2. Constrain drone→f1 (the lower body note) to ≥ m3 from the drone —
+         this enforces actual arpeggio character. Without it the picker could
+         pick a m2 above the drone, which would be a chromatic cluster, not
+         an arpeggio.
+      3. Among 2-note pairs within max_stretch (by middle-fret proximity to
+         the target), prefer pairs that combine with the string's drone to
+         form a recognised triad or 7th chord.
+      4. Apply a **variety bonus**: pairs whose chord *type* (interval
+         signature) hasn't appeared on a previous string get a strong boost,
+         pairs whose exact chord *identity* (pitch-class set) is unused get
+         a smaller boost. This pushes each string toward a different chord —
+         major / minor / dim / sus / dom7-no3 / etc. — for harmonic variety.
+      5. Fall back to a non-chord pair within max_stretch, then a single
+         chord tone, when no pair fits.
     """
     if max_stretch is None:
         max_stretch = MAX_FINGER_STEP
-    # Use full scale tones so the arpeggio picker can find compact pairs near
-    # every target position. The chord identity is computed at render time
-    # from drone + body notes by per_string_chord.
     pitches = scale_pitches(root_name, scale_name)
     root_pc = NOTE_NAMES.index(root_name)
     fret_floor = _effective_fret_min(string_configs)
     pattern = {}
 
-    def best_notes(frets, target, req_pc, string_pc, drone_pc):
-        """Pair-first with chord-forming preference.
+    # State shared across strings: used chord types (interval signatures from
+    # drone) and used chord identities (sorted pc tuples). These drive the
+    # variety bonus — each string is nudged toward a fresh chord.
+    used_types = set()
+    used_chord_ids = set()
 
-        Picks the closest chord-forming pair (drone + 2 body notes = a
-        recognised triad or 7th) by middle-fret proximity, unless a
-        non-chord pair is *much* closer (more than max_stretch better) —
-        in which case the non-chord pair wins for compactness. Falls back
-        to a single chord tone when no pair fits inside the position.
-        """
-        chord_pairs = []
-        other_pairs = []
+    # Allowed drone→f1 interval range (semitones). m3..♭6 inclusive —
+    # broad enough to cover all standard triad/7th roots/3rds/5ths.
+    _ARP_DRONE_TO_F1 = frozenset({3, 4, 5, 6, 7, 8})
+
+    def best_notes(frets, target, req_pc, string_pc, drone_pc):
+        """Pair-first picker with chord-forming preference and variety bonus."""
+        chord_pairs = []  # (score, a, b, intervals, chord_id)
+        other_pairs = []  # (score, a, b)
         for i in range(len(frets)):
             for j in range(i + 1, len(frets)):
                 a, b = frets[i], frets[j]
@@ -932,45 +940,71 @@ def generate_arpeggio(root_name: str, scale_name: str, start_fret: int = 3,
                 if req_pc is not None:
                     if not any((string_pc + f) % 12 == req_pc for f in (a, b)):
                         continue
-                body_pcs = [(string_pc + a) % 12, (string_pc + b) % 12]
-                full_pcs = sorted({drone_pc, *body_pcs},
+                f1_pc = (string_pc + a) % 12
+                f2_pc = (string_pc + b) % 12
+                drone_to_f1 = (f1_pc - drone_pc) % 12
+                # Drone→f1 must be m3..♭6 — gives the pair real arpeggio
+                # character rather than a chromatic cluster.
+                if drone_to_f1 not in _ARP_DRONE_TO_F1:
+                    continue
+                full_pcs = sorted({drone_pc, f1_pc, f2_pc},
                                    key=lambda p: (p - drone_pc) % 12)
                 intervals = tuple((p - drone_pc) % 12 for p in full_pcs)
+                chord_id = tuple(full_pcs)
                 forms_chord = intervals in _CHORD_TYPE_NAMES
                 middle = (a + b) / 2
                 middle_prox = abs(middle - target)
-                bucket = chord_pairs if forms_chord else other_pairs
-                bucket.append((middle_prox, a, b))
+                # Variety bonus: subtract from score so unused types win on
+                # ties. Type bonus dominates identity bonus (3 > 1.5).
+                variety_bonus = 0.0
+                if forms_chord:
+                    if intervals not in used_types:
+                        variety_bonus += 3.0
+                    if chord_id not in used_chord_ids:
+                        variety_bonus += 1.5
+                score = middle_prox - variety_bonus
+                if forms_chord:
+                    chord_pairs.append((score, a, b, intervals, chord_id))
+                else:
+                    other_pairs.append((score, a, b))
 
         chord_pairs.sort()
         other_pairs.sort()
 
-        # Find the best chord-forming pair within an extended threshold
-        # (2 * max_stretch — pairs forming chords slightly outside the
-        # position are still preferable to "?" labels).
-        best_chord = chord_pairs[0] if chord_pairs and chord_pairs[0][0] <= 2 * max_stretch else None
+        # The variety-bonus is in score; we accept chord pairs up to
+        # 2*max_stretch from the target, before bonus is applied.
+        def _chord_within_threshold(item):
+            return abs((item[1] + item[2]) / 2 - target) <= 2 * max_stretch
+
+        best_chord = chord_pairs[0] if chord_pairs and _chord_within_threshold(chord_pairs[0]) else None
         best_other = other_pairs[0] if other_pairs and other_pairs[0][0] <= max_stretch else None
 
+        chosen = None
         if best_chord is not None:
-            # If a non-chord pair is significantly closer (more than
-            # max_stretch better by middle-fret proximity), prefer the
-            # tighter non-chord pair to keep the pattern compact.
-            if best_other is not None and best_other[0] < best_chord[0] - max_stretch:
-                return (best_other[1], best_other[2])
-            return (best_chord[1], best_chord[2])
-
-        if best_other is not None:
-            return (best_other[1], best_other[2])
-
-        single = pick_single(frets, target=target,
-                             required_pc=req_pc, string_pc=string_pc)
-        if single is not None:
-            return single
-        if chord_pairs:
-            return (chord_pairs[0][1], chord_pairs[0][2])
-        if other_pairs:
-            return (other_pairs[0][1], other_pairs[0][2])
-        return None
+            chord_middle_prox = abs((best_chord[1] + best_chord[2]) / 2 - target)
+            # Non-chord pair only wins if it is much closer than the
+            # chord-forming pair (more than max_stretch better).
+            if best_other is not None and best_other[0] < chord_middle_prox - max_stretch:
+                chosen = (best_other[1], best_other[2])
+            else:
+                chosen = (best_chord[1], best_chord[2])
+                # Record for the variety bonus on future strings.
+                used_types.add(best_chord[3])
+                used_chord_ids.add(best_chord[4])
+        elif best_other is not None:
+            chosen = (best_other[1], best_other[2])
+        else:
+            single = pick_single(frets, target=target,
+                                 required_pc=req_pc, string_pc=string_pc)
+            if single is not None:
+                chosen = single
+            elif chord_pairs:
+                chosen = (chord_pairs[0][1], chord_pairs[0][2])
+                used_types.add(chord_pairs[0][3])
+                used_chord_ids.add(chord_pairs[0][4])
+            elif other_pairs:
+                chosen = (other_pairs[0][1], other_pairs[0][2])
+        return chosen
 
     for idx, s in enumerate(STRING_ORDER_LOW_TO_HIGH):
         capo_fret = None
