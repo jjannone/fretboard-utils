@@ -161,6 +161,15 @@ caller-passed values above the cap are silently clamped.
   Blank lines between diagrams are stripped by the renderer; separator lines are ugly.
   A new ``` fence between each diagram is the only reliable visual break.
 
+### PDF / printable output
+- **Default to portrait page orientation** when generating PDFs of tabs or full
+  sets. Only use landscape when the content genuinely cannot be made to fit
+  portrait, or when the user explicitly asks for landscape.
+- Label the instrument ("Guitar" / "Bass") clearly at the top of each page.
+- `examples/french_sixth_pdfs.py` is the reference generator: portrait, one page
+  per scale, full sets laid out two diagrams per row, with DejaVu Sans Mono for
+  the monospace grid (it carries the ♭/♯/→ glyphs that the PDF core fonts lack).
+
 ### Finger-reach cap
 - `MAX_FINGER_STEP` (in `src/fretboard.py`) is the **global hard cap** on the
   largest semitone gap between two adjacent fingered notes on one string.
