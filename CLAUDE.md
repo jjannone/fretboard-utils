@@ -42,13 +42,27 @@ Before writing any new naming/labeling/spelling code, check this list. All helpe
 below already exist in [src/fretboard.py](src/fretboard.py). Use them.
 
 ### Constants and tables
-- `OPEN_STRINGS` — dict mapping string letter (E, A, D, G, B, e) to open pitch class.
+- `OPEN_STRINGS` — dict mapping string letter to open pitch class (the *active*
+  tuning; guitar EADGBe by default).
 - `NOTE_NAMES` — 12 sharps-only note names.
-- `STRING_ORDER_LOW_TO_HIGH`, `STRING_ORDER_DISPLAY` — string letter orderings.
+- `STRING_ORDER_LOW_TO_HIGH`, `STRING_ORDER_DISPLAY` — string letter orderings
+  (also reflect the active tuning).
 - `SCALES` — dict of scale name → list of intervals from root.
 - `STRETCH_PROFILES` — preset per-string (min_stretch, max_stretch) profiles for `generate_2nps`.
 - `MAX_FINGER_STEP` — global hard cap on adjacent-fingered-note distance (m3 = 3).
+  See `effective_finger_step(scale)` for the per-scale cap (raised to M3 = 4 for
+  scales with no minor 3rd, e.g. whole-tone).
 - `DEGREE_LABEL` — semitone-interval → degree string (`'1'`, `'♭2'`, `'3'`, `'♯4'`, `'♯5'`, …).
+
+### Instrument tunings
+- The module defaults to 6-string guitar (EADGBe). To generate/render for another
+  instrument, wrap the calls in `with use_tuning(name): …`. This temporarily
+  rebinds the tuning globals (`OPEN_STRINGS`, the string orders, the line regex,
+  `STRETCH_PROFILES`) and restores them on exit.
+- Presets: `'guitar'` (EADGBe), `'bass_6'` (BEADGC, low B to high C).
+- Inside a tuning block, "root on the lowest string" targets that tuning's lowest
+  string (B for `bass_6`, E for guitar). String letters may differ (bass adds a
+  low `B` and high `C`); all helpers key off the active `OPEN_STRINGS`.
 
 ### Pitch math
 - `scale_pitches(root, scale)` → set of pitch classes in the scale. Use to test scale membership.
@@ -89,9 +103,12 @@ caller-passed values above the cap are silently clamped.
 
 ### Generators (low-level — return raw `{string: tuple_of_frets}` patterns)
 - `generate_2nps(root, scale, …)` — 2-notes-per-string scale pattern. Knobs:
-  `start_fret`, `min_stretch`, `max_stretch`, `direction` (`'up'` or `'free'`),
-  `position_shift`, `string_configs`, `stretch_profile`, `pitches` override,
-  `require_root_on_low_e`.
+  `start_fret`, `min_stretch`, `max_stretch`, `direction`, `position_shift`,
+  `string_configs`, `stretch_profile`, `pitches` override, `require_root_on_low_e`.
+  `direction` is one of: `'up'` (ascending box), `'free'` (per-string target =
+  `start_fret + idx·position_shift`), `'down'` (descending diagonal, ~−2/string),
+  `'climb'` (gentle ascent, ~+2/string), `'fast_climb'` (steep ascent, ~+5/string).
+  The `down`/`climb`/`fast_climb` slopes are defaults used when `position_shift=0`.
 - `generate_3nps(root, scale, …)` — 3-notes-per-string at one position. Knobs:
   `start_fret`, `min_span`, `max_span`, `max_step`, `position_shift`, `string_configs`,
   `require_root_on_low_e`.
@@ -104,9 +121,10 @@ caller-passed values above the cap are silently clamped.
 - `generate_3nps_and_render(root, scale, …)` — 3NPS, verified.
 - `generate_arpeggio_and_render(root, scale, …)` — arpeggio, verified.
 - `generate_full_set(root, scale, string_configs=None, second_capo_fret=None, …)` →
-  dict with three labeled sections: `'two_note'` (3 variants: tight, wide, alternating),
-  `'three_note'` (3 ascending positions), `'arpeggio'` (triad + 7th-chord versions).
-  Root is forced onto the low E string in every diagram. Pass `second_capo_fret=N` to
+  dict with three labeled sections: `'two_note'` (**6 variants**: tight, wide,
+  alternating, descending, climbing, fast climbing), `'three_note'` (3 ascending
+  positions), `'arpeggio'` (triad + 7th-chord versions).
+  Root is forced onto the lowest string in every diagram. Pass `second_capo_fret=N` to
   convert any `'X'` strings into a second spider capo at fret N.
 
 ### Rendering
@@ -144,12 +162,20 @@ caller-passed values above the cap are silently clamped.
   A new ``` fence between each diagram is the only reliable visual break.
 
 ### Finger-reach cap
-- `MAX_FINGER_STEP` (in `src/fretboard.py`) is a **global hard cap** on the
+- `MAX_FINGER_STEP` (in `src/fretboard.py`) is the **global hard cap** on the
   largest semitone gap between two adjacent fingered notes on one string.
   Default: **3 semitones (minor 3rd)**.
+- **Major-3rd exception**: a scale that contains no minor 3rd *anywhere* (no two
+  of its tones are 3 semitones apart — e.g. the whole-tone scale, all-even
+  intervals) has no m3 grouping to reach for, so its smallest "wide" 2-note
+  option is a major 3rd. For such scales the cap is raised one semitone to a
+  **major 3rd (4)**. `effective_finger_step(scale_name)` returns the per-scale cap
+  (4 for whole-tone, 3 for everything else, since every other scale in `SCALES`
+  has a minor 3rd somewhere). The generators compute it and pass it to the
+  pickers as `cap=`.
 - Hard-capped in `pick_pair` and `pick_triple` — any caller-passed
-  `max_stretch` or `max_step` above the cap is silently clamped to it.
-  This applies uniformly: scales (tight/wide/alternating), 3NPS, arpeggios.
+  `max_stretch` or `max_step` above `cap` is silently clamped to it.
+  This applies uniformly: scales (all 6 two-note variants), 3NPS, arpeggios.
 - Arpeggios default to `degrees=(1, 3, 5, 7)` (the diatonic 7th chord).
   Adding the 7th brings in a m2 or M2 around the 7-1 boundary in most
   chord types, so 2-note-per-string pairs within m3 are usually available

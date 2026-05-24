@@ -23,6 +23,7 @@ Diagram convention:
 """
 
 import re
+from contextlib import contextmanager
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -48,6 +49,26 @@ STRING_ORDER_DISPLAY = ['e', 'B', 'G', 'D', 'A', 'E']  # high to low for renderi
 # without shifting position. Scale generators use this as the default cap;
 # arpeggios override it because chord tones are inherently sparser.
 MAX_FINGER_STEP = 3
+
+# A scale that contains NO minor 3rd anywhere (no two of its tones are 3
+# semitones apart — e.g. the whole-tone scale, whose intervals are all even)
+# has no m3 grouping to reach for, so its smallest "wide" 2-note option is a
+# major 3rd. For such scales the finger-reach cap is raised one semitone to a
+# major 3rd (4); every other scale keeps the m3 cap.
+MAJOR_THIRD_STEP = 4
+
+
+def _scale_has_minor_third(scale_name: str) -> bool:
+    """True iff some pair of the scale's tones is a minor 3rd (3 semitones)
+    apart, counted cyclically (so B→D across the octave counts)."""
+    pcs = {i % 12 for i in SCALES[scale_name]}
+    return any((p + 3) % 12 in pcs for p in pcs)
+
+
+def effective_finger_step(scale_name: str) -> int:
+    """Per-scale finger-reach cap: a major 3rd (4) for scales with no minor
+    3rd anywhere, else the global MAX_FINGER_STEP (a minor 3rd)."""
+    return MAJOR_THIRD_STEP if not _scale_has_minor_third(scale_name) else MAX_FINGER_STEP
 
 # Scale interval patterns (semitones from root)
 SCALES = {
@@ -252,23 +273,26 @@ def _effective_fret_min(string_configs: dict, base_min: int = 3) -> int:
 
 
 def pick_pair(frets, target=None, min_stretch: int = 0, max_stretch: int = None,
-              required_pc: int = None, string_pc: int = None):
+              required_pc: int = None, string_pc: int = None, cap: int = None):
     """
     Pick a pair of in-scale frets where stretch is in [min_stretch, max_stretch].
     Primary sort: proximity of f1 to target.
     Tiebreak: prefer larger stretch (bolder interval).
     Falls back to min_stretch=0 if nothing qualifies.
 
-    max_stretch is hard-capped at MAX_FINGER_STEP — the module-wide finger-reach
-    limit. Values above the cap are silently clamped to it. Pass None (default)
+    cap is the hard finger-reach limit (default MAX_FINGER_STEP). Callers pass a
+    scale-derived cap via effective_finger_step() to allow a major 3rd on scales
+    that contain no minor 3rd. max_stretch is silently clamped to cap. Pass None
     to use the cap directly.
 
     required_pc / string_pc: if both given, at least one of the two chosen frets
     must produce the pitch class `required_pc` on a string whose open pitch is
     `string_pc`. Used to force the root onto a specific string.
     """
-    if max_stretch is None or max_stretch > MAX_FINGER_STEP:
-        max_stretch = MAX_FINGER_STEP
+    if cap is None:
+        cap = MAX_FINGER_STEP
+    if max_stretch is None or max_stretch > cap:
+        max_stretch = cap
     if min_stretch > max_stretch:
         min_stretch = max_stretch
     candidates = []
@@ -295,7 +319,7 @@ def pick_pair(frets, target=None, min_stretch: int = 0, max_stretch: int = None,
 def pick_triple(frets, target=None, min_span: int = 2, max_span: int = 6,
                 max_step: int = None,
                 required_pc: int = None, string_pc: int = None,
-                required_first_pc: int = None):
+                required_first_pc: int = None, cap: int = None):
     """
     Pick 3 consecutive in-scale frets where (last - first) is in [min_span, max_span]
     AND each adjacent gap (b-a, c-b) is at most max_step.
@@ -313,8 +337,10 @@ def pick_triple(frets, target=None, min_span: int = 2, max_span: int = 6,
     limit. Values above the cap are silently clamped. Pass None (default) to
     use the cap directly.
     """
-    if max_step is None or max_step > MAX_FINGER_STEP:
-        max_step = MAX_FINGER_STEP
+    if cap is None:
+        cap = MAX_FINGER_STEP
+    if max_step is None or max_step > cap:
+        max_step = cap
     candidates = []
     for i in range(len(frets) - 2):
         a, b, c = frets[i], frets[i + 1], frets[i + 2]
@@ -598,7 +624,7 @@ def decorate(diagram: str, root_name: str, scale_name: str,
     for line in diagram.split('\n'):
         if not line:
             continue
-        if line[0] in 'EADGBe':
+        if line[0] in OPEN_STRINGS:
             s = line[0]
             config = line[1]
             rest = line[2:]  # body + closing | (and any embedded label)
@@ -633,25 +659,67 @@ def chord_tones(root_name: str, scale_name: str,
 
 
 # Named per-string stretch profiles.  Each maps string name -> (min, max) semitone span.
-# Used with stretch_profile= in generate_2nps.
-STRETCH_PROFILES = {
-    # Uniform
-    'tight':        {s: (0, 2) for s in STRING_ORDER_LOW_TO_HIGH},
-    'wide':         {s: (3, 5) for s in STRING_ORDER_LOW_TO_HIGH},
-    'free':         {s: (0, 5) for s in STRING_ORDER_LOW_TO_HIGH},
-    # Gradient across the neck
-    'bass_tight':   {s: (0, 2) if i < 3 else (3, 5)
-                     for i, s in enumerate(STRING_ORDER_LOW_TO_HIGH)},
-    'bass_wide':    {s: (3, 5) if i < 3 else (0, 2)
-                     for i, s in enumerate(STRING_ORDER_LOW_TO_HIGH)},
-    'growing':      {s: (i, min(i + 2, 5))
-                     for i, s in enumerate(STRING_ORDER_LOW_TO_HIGH)},
-    'shrinking':    {s: (max(0, 4 - i), max(2, 5 - i))
-                     for i, s in enumerate(STRING_ORDER_LOW_TO_HIGH)},
-    # Alternating tight/wide by string
-    'alternating':  {s: (0, 2) if i % 2 == 0 else (3, 5)
-                     for i, s in enumerate(STRING_ORDER_LOW_TO_HIGH)},
+# Used with stretch_profile= in generate_2nps. Built from the active string order
+# so they stay valid under use_tuning() (the keys must match the current strings).
+def _build_stretch_profiles(order):
+    return {
+        # Uniform
+        'tight':       {s: (0, 2) for s in order},
+        'wide':        {s: (3, 5) for s in order},
+        'free':        {s: (0, 5) for s in order},
+        # Gradient across the neck
+        'bass_tight':  {s: (0, 2) if i < 3 else (3, 5) for i, s in enumerate(order)},
+        'bass_wide':   {s: (3, 5) if i < 3 else (0, 2) for i, s in enumerate(order)},
+        'growing':     {s: (i, min(i + 2, 5)) for i, s in enumerate(order)},
+        'shrinking':   {s: (max(0, 4 - i), max(2, 5 - i)) for i, s in enumerate(order)},
+        # Alternating tight/wide by string
+        'alternating': {s: (0, 2) if i % 2 == 0 else (3, 5) for i, s in enumerate(order)},
+    }
+
+
+STRETCH_PROFILES = _build_stretch_profiles(STRING_ORDER_LOW_TO_HIGH)
+
+
+# Instrument tunings: (low-to-high string order, {string letter: open pitch class}).
+# 'guitar' is the module default; 'bass_6' is a 6-string bass tuned BEADGC.
+_TUNING_PRESETS = {
+    'guitar': (['E', 'A', 'D', 'G', 'B', 'e'],
+               {'E': 4, 'A': 9, 'D': 2, 'G': 7, 'B': 11, 'e': 4}),
+    'bass_6': (['B', 'E', 'A', 'D', 'G', 'C'],
+               {'B': 11, 'E': 4, 'A': 9, 'D': 2, 'G': 7, 'C': 0}),
 }
+
+
+@contextmanager
+def use_tuning(name: str):
+    """Temporarily switch the active instrument tuning for generation/rendering.
+
+    Rebinds the module-level tuning globals (OPEN_STRINGS, the two string
+    orders, the diagram line regex, and STRETCH_PROFILES) for the duration of
+    the with-block, then restores them. The module default is 6-string guitar,
+    so existing callers are unaffected.
+
+    Presets: 'guitar' (EADGBe) and 'bass_6' (BEADGC, low B to high C). Inside
+    the block, the "root on the lowest string" constraint targets that tuning's
+    lowest string (B for bass, E for guitar).
+    """
+    global OPEN_STRINGS, STRING_ORDER_LOW_TO_HIGH, STRING_ORDER_DISPLAY
+    global DIAGRAM_LINE_RE, STRETCH_PROFILES
+    if name not in _TUNING_PRESETS:
+        raise ValueError(f"Unknown tuning {name!r}; known: {list(_TUNING_PRESETS)}")
+    saved = (OPEN_STRINGS, STRING_ORDER_LOW_TO_HIGH, STRING_ORDER_DISPLAY,
+             DIAGRAM_LINE_RE, STRETCH_PROFILES)
+    order, opens = _TUNING_PRESETS[name]
+    OPEN_STRINGS = dict(opens)
+    STRING_ORDER_LOW_TO_HIGH = list(order)
+    STRING_ORDER_DISPLAY = list(reversed(order))
+    DIAGRAM_LINE_RE = re.compile(rf"^([{''.join(order)}])([|0-9Xx]?)(.*?)\|?$")
+    STRETCH_PROFILES = _build_stretch_profiles(order)
+    try:
+        yield
+    finally:
+        (OPEN_STRINGS, STRING_ORDER_LOW_TO_HIGH, STRING_ORDER_DISPLAY,
+         DIAGRAM_LINE_RE, STRETCH_PROFILES) = saved
 
 
 def generate_2nps(root_name: str, scale_name: str, start_fret: int = 3,
@@ -663,11 +731,16 @@ def generate_2nps(root_name: str, scale_name: str, start_fret: int = 3,
                   require_root_on_low_e: bool = False):
     """Generate a 2-note-per-string pattern.
 
-    direction='up'  : classic ascending box — fret floor rises with prev pair.
-    direction='free': each string targets start_fret + string_index * position_shift,
-                      searching the full neck. Positive position_shift moves up the
-                      neck (higher frets); negative moves down. A position_shift of
-                      ~1.5 spans ~8 frets across all 6 strings.
+    direction='up'         : classic ascending box — fret floor rises with prev pair.
+    direction='free'       : each string targets start_fret + string_index *
+                             position_shift, searching the full neck. Positive
+                             position_shift moves up the neck; negative moves down.
+    direction='down'       : descending diagonal — targets drop ~2 frets per string.
+    direction='climb'      : gentle ascent — targets rise ~2 frets per string.
+    direction='fast_climb' : steep ascent — targets rise ~5 frets per string,
+                             sweeping up the neck (top strings clamp near the top).
+    The 'down'/'climb'/'fast_climb' slopes are the per-string defaults used when
+    position_shift is 0; pass a nonzero position_shift to override the slope.
 
     min_stretch / max_stretch: fret span of the chosen pair on each string.
     Set min_stretch=3 to force intervals of a minor 3rd or larger (up to P4 at 5).
@@ -692,14 +765,27 @@ def generate_2nps(root_name: str, scale_name: str, start_fret: int = 3,
     bar in string_configs sets a global floor — no body note may sit at or below
     that fret on any string.
     """
+    cap = effective_finger_step(scale_name)
     if max_stretch is None:
-        max_stretch = MAX_FINGER_STEP
+        max_stretch = cap
     if pitches is None:
         pitches = scale_pitches(root_name, scale_name)
     root_pc = NOTE_NAMES.index(root_name)
     fret_floor = _effective_fret_min(string_configs)
     pattern = {}
     prev_low = max(start_fret, fret_floor)
+    lowest = STRING_ORDER_LOW_TO_HIGH[0]
+
+    # Directional modes built on the 'free' per-string-target mechanism. When
+    # position_shift is left at 0, each named mode supplies its own slope:
+    #   climb       — up ~2 frets per string  (gentle ascent)
+    #   fast_climb  — up ~5 frets per string  (steep ascent, sweeps the neck)
+    #   down        — down ~2 frets per string (descending diagonal)
+    _DIRECTION_SHIFT = {'climb': 2.0, 'fast_climb': 5.0, 'down': -2.0}
+    free_like = direction in ('free', 'climb', 'fast_climb', 'down')
+    shift = position_shift
+    if shift == 0 and direction in _DIRECTION_SHIFT:
+        shift = _DIRECTION_SHIFT[direction]
 
     for idx, s in enumerate(STRING_ORDER_LOW_TO_HIGH):
         mn = min_stretch
@@ -717,38 +803,38 @@ def generate_2nps(root_name: str, scale_name: str, start_fret: int = 3,
             # 'X' falls through to normal fretted logic below
 
         if capo_fret is not None:
-            target = start_fret + idx * position_shift if direction == 'free' else prev_low
+            target = (start_fret + idx * shift) if free_like else prev_low
             frets = frets_in_scale(s, pitches, fret_min=fret_floor, capo_fret=capo_fret)
         elif direction == 'up':
             target = prev_low
             frets = frets_in_scale(s, pitches, fret_min=max(fret_floor, prev_low - 1))
-        else:
-            target = start_fret + idx * position_shift
+        else:  # free / climb / fast_climb / down
+            target = start_fret + idx * shift
             frets = frets_in_scale(s, pitches, fret_min=fret_floor)
 
-        # require_root_on_low_e applies only to the low E string. If the capo
-        # on E already produces the root, the requirement is already met.
+        # require_root_on_low_e applies only to the lowest string. If the capo
+        # there already produces the root, the requirement is already met.
         req_pc = None
-        if require_root_on_low_e and s == 'E':
+        if require_root_on_low_e and s == lowest:
             # Open-string drone counts too: if the string already drones the
             # root (open or capo'd to it), no body root is required.
             if _drone_pc(s, string_configs) != root_pc:
                 req_pc = root_pc
 
         pair = pick_pair(frets, target=target, min_stretch=mn, max_stretch=mx,
-                         required_pc=req_pc, string_pc=OPEN_STRINGS[s])
+                         required_pc=req_pc, string_pc=OPEN_STRINGS[s], cap=cap)
         if pair is None and mn > 0:
             pair = pick_pair(frets, target=target, min_stretch=0, max_stretch=mx,
-                             required_pc=req_pc, string_pc=OPEN_STRINGS[s])
+                             required_pc=req_pc, string_pc=OPEN_STRINGS[s], cap=cap)
         if pair is None:
             frets_full = frets_in_scale(s, pitches,
                                         fret_min=fret_floor,
                                         capo_fret=capo_fret)
             pair = pick_pair(frets_full, target=target, min_stretch=0, max_stretch=mx,
-                             required_pc=req_pc, string_pc=OPEN_STRINGS[s])
+                             required_pc=req_pc, string_pc=OPEN_STRINGS[s], cap=cap)
         if pair is None and req_pc is not None:
             # Last-resort: drop the root requirement so generation still succeeds.
-            pair = pick_pair(frets, target=target, min_stretch=0, max_stretch=mx)
+            pair = pick_pair(frets, target=target, min_stretch=0, max_stretch=mx, cap=cap)
         if pair is None:
             return None
 
@@ -787,13 +873,15 @@ def generate_3nps(root_name: str, scale_name: str, start_fret: int = 3,
     The highest spider-capo bar sets a global floor on body frets across all
     strings; the bar physically blocks fretting at or below that fret.
     """
+    cap = effective_finger_step(scale_name)
     if max_step is None:
-        max_step = MAX_FINGER_STEP
+        max_step = cap
     if pitches is None:
         pitches = scale_pitches(root_name, scale_name)
     root_pc = NOTE_NAMES.index(root_name)
     fret_floor = _effective_fret_min(string_configs)
     pattern = {}
+    lowest = STRING_ORDER_LOW_TO_HIGH[0]
 
     # Scale pitch classes in ascending semitone order — used to compute
     # the "next scale tone" for continuity.
@@ -824,7 +912,7 @@ def generate_3nps(root_name: str, scale_name: str, start_fret: int = 3,
             frets = frets_in_scale(s, pitches, fret_min=fret_floor)
 
         req_pc = None
-        if require_root_on_low_e and s == 'E':
+        if require_root_on_low_e and s == lowest:
             # Open-string drone counts too: if the string already drones the
             # root (open or capo'd to it), no body root is required.
             if _drone_pc(s, string_configs) != root_pc:
@@ -837,21 +925,21 @@ def generate_3nps(root_name: str, scale_name: str, start_fret: int = 3,
                              min_span=min_span, max_span=max_span,
                              max_step=max_step,
                              required_pc=req_pc, string_pc=OPEN_STRINGS[s],
-                             required_first_pc=req_first_pc)
+                             required_first_pc=req_first_pc, cap=cap)
         # Drop continuity constraint first if no fit
         if triple is None and req_first_pc is not None:
             triple = pick_triple(frets, target=target,
                                  min_span=min_span, max_span=max_span,
                                  max_step=max_step,
-                                 required_pc=req_pc, string_pc=OPEN_STRINGS[s])
+                                 required_pc=req_pc, string_pc=OPEN_STRINGS[s], cap=cap)
         if triple is None and req_pc is not None:
             triple = pick_triple(frets, target=target,
                                  min_span=min_span, max_span=max_span,
-                                 max_step=max_step)
+                                 max_step=max_step, cap=cap)
         if triple is None:
             # Relax span only; keep max_step honored as the ergonomics cap.
             triple = pick_triple(frets, target=target, min_span=0,
-                                 max_span=2 * max_step, max_step=max_step)
+                                 max_span=2 * max_step, max_step=max_step, cap=cap)
         if triple is None:
             return None
         pattern[s] = triple
@@ -892,7 +980,7 @@ def generate_arpeggio(root_name: str, scale_name: str, start_fret: int = 3,
          chord tone, when no pair fits.
     """
     if max_stretch is None:
-        max_stretch = MAX_FINGER_STEP
+        max_stretch = effective_finger_step(scale_name)
     pitches = scale_pitches(root_name, scale_name)
     root_pc = NOTE_NAMES.index(root_name)
     fret_floor = _effective_fret_min(string_configs)
@@ -986,6 +1074,7 @@ def generate_arpeggio(root_name: str, scale_name: str, start_fret: int = 3,
                 chosen = (other_pairs[0][1], other_pairs[0][2])
         return chosen
 
+    lowest = STRING_ORDER_LOW_TO_HIGH[0]
     for idx, s in enumerate(STRING_ORDER_LOW_TO_HIGH):
         capo_fret = None
         if string_configs and s in string_configs:
@@ -1004,7 +1093,7 @@ def generate_arpeggio(root_name: str, scale_name: str, start_fret: int = 3,
 
         req_pc = None
         drone = _drone_pc(s, string_configs)
-        if require_root_on_low_e and s == 'E':
+        if require_root_on_low_e and s == lowest:
             # Open-string drone counts too: if the string already drones the
             # root, no body root is required.
             if drone != root_pc:
@@ -1264,16 +1353,24 @@ def generate_full_set(root_name: str, scale_name: str,
             raise RuntimeError(f"Arpeggio verification failed at fret {start}")
         return diagram
 
-    # All three 2NPS variants stay within MAX_FINGER_STEP (a hard cap in the
-    # pickers). The variation is in the *minimum* stretch and shape.
+    # Six 2NPS variants. The first three vary stretch (tight/wide/alternating);
+    # the last three vary neck angle (descending / climbing / fast climbing).
+    # All stay within the scale's finger-reach cap (a minor 3rd, or a major 3rd
+    # for scales with no minor 3rd such as whole-tone).
+    cap = effective_finger_step(scale_name)
     two_note = [
         ('tight (m2)',
          make_2nps(base, 0, 2, STRETCH_PROFILES['tight'], 'up', 0)),
-        ('wide (m3)',
-         make_2nps(base, MAX_FINGER_STEP, MAX_FINGER_STEP, None, 'free', 0)),
+        ('wide',
+         make_2nps(base, cap, cap, None, 'free', 0)),
         ('alternating',
-         make_2nps(base + 2, 0, MAX_FINGER_STEP,
-                   STRETCH_PROFILES['alternating'], 'free', 0)),
+         make_2nps(base + 2, 0, cap, STRETCH_PROFILES['alternating'], 'free', 0)),
+        ('descending',
+         make_2nps(base + 9, 0, cap, None, 'down', 0)),
+        ('climbing',
+         make_2nps(base, 0, cap, None, 'climb', 0)),
+        ('fast climbing',
+         make_2nps(base, 0, cap, None, 'fast_climb', 0)),
     ]
 
     three_note = [
