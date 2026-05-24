@@ -8,10 +8,12 @@ Every generated tab — 2NPS, 3NPS, **and** arpeggios — uses this per-line lay
 NOTE(degree)  CONFIG body|  [chord_label]
 ```
 
-- **Left column** — `Note(degree)`: drone note + lowercase roman numeral for its
-  scale-degree role (e.g. `G#(i)`, `B(iii)`, `D(#iv)`, `C#(iv)`). For X-muted
-  strings the implicit open-string drone is still labelled. Built by
-  `drone_label(...)`.
+- **Left column** — `Note(degree)`: drone note + its interval from the root,
+  spelled via `DEGREE_LABEL` (e.g. `G#(1)`, `B(3)`, `D(♯4)`, `C#(4)`). The
+  interval label works for any scale size — 8-note diminished scales and the
+  12-note chromatic scale included — and an out-of-scale drone simply reads as
+  its own chromatic degree. For X-muted strings the implicit open-string drone
+  is still labelled. Built by `drone_label(...)`.
 - **CONFIG**: `0` (open), `'1'..'9'` (capo fret), `X` (muted), `|` (fretted-only).
 - **body**: standard ASCII tab body, with the highest spider-capo bar's
   fret-shift already applied.

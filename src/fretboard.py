@@ -449,19 +449,20 @@ def capo_summary(string_configs: dict) -> str:
     return '; '.join(parts)
 
 
-ROMAN_NUMERALS = ['i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii']
-
-
 def drone_label(string_name: str, string_configs: dict,
                 root_name: str, scale_name: str) -> str:
-    """Return a label like 'G#(i)', 'D(#iv)', 'C#(iv)' for the drone note on a
-    string, annotated with its scale-degree role as a lowercase roman numeral.
+    """Return a label like 'G#(1)', 'D(♯4)', 'C#(4)' for the drone note on a
+    string, annotated with its interval from the root.
 
-    For drones whose pitch is in the scale, the label is `Note(roman)` where
-    roman is the scale-position numeral (1st scale tone → i, 2nd → ii, …).
-    For drones outside the scale, the label is `Note(♭roman)` or `Note(#roman)`
-    showing the closest scale degree with an accidental.
+    The role is the chromatic interval from the root, spelled via DEGREE_LABEL
+    (1, ♭2, 2, ♭3, 3, 4, ♯4, 5, ♯5, 6, ♭7, 7). Because every semitone has a
+    fixed label this works for any scale — including the 8-note diminished
+    scales and the 12-note chromatic scale — with no ordinal-numeral overflow,
+    and an out-of-scale drone simply reads as its own chromatic degree.
     For X (muted) strings, the implicit open-string drone is used.
+
+    scale_name is retained for signature stability (the interval label does not
+    depend on the scale).
     """
     drone = _drone_pc(string_name, string_configs)
     open_pc = OPEN_STRINGS[string_name]
@@ -475,28 +476,7 @@ def drone_label(string_name: str, string_configs: dict,
     note = NOTE_NAMES[drone]
     root = NOTE_NAMES.index(root_name)
     interval = (drone - root) % 12
-    intervals = SCALES[scale_name]
-    if interval in intervals:
-        idx = intervals.index(interval)
-        role = ROMAN_NUMERALS[idx] if idx < len(ROMAN_NUMERALS) else f"({idx+1})"
-        return f"{note}({role})"
-    # Out-of-scale drone: find adjacent scale degree
-    sorted_iv = sorted(intervals)
-    for k, scale_iv in enumerate(sorted_iv):
-        if scale_iv > interval:
-            if k > 0:
-                lower = sorted_iv[k - 1]
-                if (interval - lower) <= (scale_iv - interval):
-                    pos = intervals.index(lower)
-                    role = ROMAN_NUMERALS[pos] if pos < 7 else f"({pos+1})"
-                    return f"{note}(#{role})"
-                pos = intervals.index(scale_iv)
-                role = ROMAN_NUMERALS[pos] if pos < 7 else f"({pos+1})"
-                return f"{note}(♭{role})"
-            return f"{note}(♭{ROMAN_NUMERALS[0]})"
-    pos = len(intervals) - 1
-    role = ROMAN_NUMERALS[pos] if pos < 7 else f"({pos+1})"
-    return f"{note}(#{role})"
+    return f"{note}({DEGREE_LABEL[interval]})"
 
 
 # Triad / 7th-chord signatures keyed by intervals from the chord root.
