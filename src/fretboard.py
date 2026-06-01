@@ -1232,35 +1232,46 @@ def generate_cluster(root_name: str, scale_name: str, *,
 def find_scalar_runs(root_name: str, scale_name: str, *,
                      max_capo: int = 4, max_distinct_capos: int = 2,
                      max_step: int = 2, allow_one_minor_third: bool = True,
-                     fret_max: int = 22):
-    """Find ascending stepwise scalar runs across all six strings, picked one
-    note per string low-to-high. Each string contributes either its open/capo
-    drone or a single fretted in-scale note above the capo bar; adjacent
-    pitches step by m2 or M2 (1 or 2 semitones), with optionally a single
-    m3 (3-semitone) hop allowed for scales whose natural neighbouring tones
-    are a minor third apart (harmonic minor, Hungarian, etc.).
+                     max_body_span: int = 7, fret_max: int = 22):
+    """Find ascending stepwise scalar runs across the upper five strings,
+    with the lowest string acting as a bass pedal beneath the run.
 
-    Unlike cluster mode (drones-only stacked-seconds chord), scalar runs use
-    fingerings to bend the natural P4/M3 string intervals into seconds, so
-    six-string strict-ascending stepwise runs that are impossible from
-    drones alone become reachable.
+    Each upper string (strings 2..6, low to high above the bass) contributes
+    either its open/capo drone or a single fretted in-scale note above the
+    capo bar. Adjacent upper-string pitches step by m2 or M2 (1 or 2
+    semitones); `allow_one_minor_third` permits one m3 (3-semitone) hop for
+    scales whose neighbouring tones are a minor third apart (harmonic minor,
+    Hungarian, etc.).
+
+    The lowest string contributes any in-scale pitch ≤ the second string's
+    pitch — typically an octave below the run, so the bass anchors the
+    cluster while the upper notes ascend in seconds. The bass→string-2 gap
+    is therefore free (often wider than a third), but every step within the
+    upper five must still be a second.
+
+    The body notes (fretted positions across all strings) must fit a
+    holdable hand position: their fret range is constrained to
+    `max_body_span` semitones (default 6). With six-string runs the
+    geometric floor is ~6 frets; tighter spans typically yield no solutions
+    because the natural P4/M3 string intervals must be compressed into
+    seconds across five string boundaries.
 
     Returns a list of dicts, ranked best-first by:
       1. No minor-3rd hop
-      2. More drones used (fewer fingerings to fret)
-      3. Fewer distinct capo frets
-      4. Lower top capo fret
-      5. Lower top body fret (closer to nut)
-      6. Lower starting pitch (room to play higher)
-    Each result has 'string_configs', 'pattern', 'sequence_midi',
-    'capo_frets', 'has_minor_third', and 'drones_used'.
+      2. Smaller body span (tighter hand position)
+      3. More drones used (fewer fingerings to fret)
+      4. Fewer distinct capo frets
+      5. Lower top capo fret
+    Each result has 'string_configs', 'pattern', 'sequence_midi' (six
+    pitches, low to high), 'capo_frets', 'has_minor_third', 'drones_used',
+    'body_span', and 'bass_gap' (semitones from bass to string-2's pitch).
     """
     import itertools as _it
     pitches = scale_pitches(root_name, scale_name)
     strings = list(STRING_ORDER_LOW_TO_HIGH)
     midi_low = min(OPEN_MIDI.values())
     midi_high = max(OPEN_MIDI.values()) + fret_max
-    # Build every valid 6-tone ascending target by walking the scale upward
+    # Five-tone ascending targets for the upper five strings
     starts = [m for m in range(midi_low, midi_high + 1) if m % 12 in pitches]
     targets = []
     for s in starts:
@@ -1268,7 +1279,7 @@ def find_scalar_runs(root_name: str, scale_name: str, *,
         cur = s
         m3_used = False
         ok = True
-        for _ in range(5):
+        for _ in range(4):  # 4 more steps -> 5 notes total
             n = cur + 1
             while n <= midi_high and n % 12 not in pitches:
                 n += 1
@@ -1306,46 +1317,61 @@ def find_scalar_runs(root_name: str, scale_name: str, *,
                     opts.setdefault(m, (f, False))
             playable.append(opts)
         for tgt, has_m3 in targets:
-            choice = []
+            # Assign tgt[0..4] to strings 2..6 (indices 1..5)
+            choice_upper = []
             ok = True
-            for i in range(6):
-                if tgt[i] in playable[i]:
-                    choice.append(playable[i][tgt[i]])
+            for i in range(5):
+                if tgt[i] in playable[i + 1]:
+                    choice_upper.append(playable[i + 1][tgt[i]])
                 else:
                     ok = False
                     break
             if not ok:
                 continue
-            cfg = {s: f for s, f in zip(strings, fret_tuple) if f != 0}
-            pattern = {s: () for s in strings}
-            drones_used = 0
-            for s, (fret, is_drone) in zip(strings, choice):
-                if is_drone:
-                    drones_used += 1
+            # Low string acts as bass pedal: any in-scale pitch <= tgt[0]
+            for low_midi, (low_fret, low_is_drone) in playable[0].items():
+                if low_midi > tgt[0]:
+                    continue
+                full = [(low_fret, low_is_drone)] + choice_upper
+                body_frets = [f for f, is_d in full if not is_d]
+                if body_frets:
+                    span = max(body_frets) - min(body_frets)
+                    if span > max_body_span:
+                        continue
                 else:
-                    pattern[s] = (fret,)
-            key = (tuple(tgt), tuple(sorted(distinct)),
-                   tuple(c[0] for c in choice))
-            if key in seen:
-                continue
-            seen.add(key)
-            body_frets = [c[0] for c in choice if not c[1]]
-            results.append({
-                'string_configs': cfg,
-                'pattern': pattern,
-                'sequence_midi': list(tgt),
-                'capo_frets': sorted(distinct),
-                'has_minor_third': has_m3,
-                'drones_used': drones_used,
-                'top_body': max(body_frets) if body_frets else 0,
-            })
+                    span = 0
+                cfg = {s: f for s, f in zip(strings, fret_tuple) if f != 0}
+                pattern = {s: () for s in strings}
+                drones_used = 0
+                for s, (fret, is_drone) in zip(strings, full):
+                    if is_drone:
+                        drones_used += 1
+                    else:
+                        pattern[s] = (fret,)
+                full_seq = [low_midi] + list(tgt)
+                key = (tuple(full_seq), tuple(sorted(distinct)),
+                       tuple(c[0] for c in full))
+                if key in seen:
+                    continue
+                seen.add(key)
+                results.append({
+                    'string_configs': cfg,
+                    'pattern': pattern,
+                    'sequence_midi': full_seq,
+                    'capo_frets': sorted(distinct),
+                    'has_minor_third': has_m3,
+                    'drones_used': drones_used,
+                    'body_span': span,
+                    'bass_gap': tgt[0] - low_midi,
+                    'top_body': max(body_frets) if body_frets else 0,
+                })
     results.sort(key=lambda r: (
         r['has_minor_third'],
+        r['body_span'],
         -r['drones_used'],
         len(r['capo_frets']),
         max(r['capo_frets']) if r['capo_frets'] else 0,
         r['top_body'],
-        r['sequence_midi'][0],
     ))
     return results
 
@@ -1353,6 +1379,7 @@ def find_scalar_runs(root_name: str, scale_name: str, *,
 def generate_scalar_run(root_name: str, scale_name: str, *,
                         max_capo: int = 4, max_distinct_capos: int = 2,
                         max_step: int = 2, allow_one_minor_third: bool = True,
+                        max_body_span: int = 7,
                         fret_max: int = 22, choose: int = 0):
     """Pick a scalar-run capo + fingering combination. Returns
     (string_configs, pattern). Raises ValueError if no run is found."""
@@ -1361,6 +1388,7 @@ def generate_scalar_run(root_name: str, scale_name: str, *,
                              max_distinct_capos=max_distinct_capos,
                              max_step=max_step,
                              allow_one_minor_third=allow_one_minor_third,
+                             max_body_span=max_body_span,
                              fret_max=fret_max)
     if not cands:
         raise ValueError(
@@ -1526,18 +1554,20 @@ def generate_scalar_run_and_render(root_name: str, scale_name: str, *,
                                    max_capo: int = 4, max_distinct_capos: int = 2,
                                    max_step: int = 2,
                                    allow_one_minor_third: bool = True,
+                                   max_body_span: int = 7,
                                    fret_max: int = 22,
                                    choose: int = 0,
                                    width: int = 20) -> str:
     """One-shot: choose a scalar-run capo + fingering combo and render the
-    diagram, verified. Picking the strings low-to-high produces an ascending
-    stepwise scale fragment; the spider capos retune some strings so their
-    open/capo pitch sits inside the run, while fingerings on the other
-    strings provide the remaining notes."""
+    diagram, verified. Strumming the upper five strings produces an
+    ascending stepwise scale fragment; the lowest string sounds beneath
+    as a bass pedal (any in-scale pitch). Body fingerings fit a holdable
+    chord shape (max_body_span frets across all fretted positions)."""
     string_configs, pattern = generate_scalar_run(
         root_name, scale_name,
         max_capo=max_capo, max_distinct_capos=max_distinct_capos,
         max_step=max_step, allow_one_minor_third=allow_one_minor_third,
+        max_body_span=max_body_span,
         fret_max=fret_max, choose=choose,
     )
     _validate_capo_count(string_configs)

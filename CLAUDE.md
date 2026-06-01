@@ -127,12 +127,13 @@ caller-passed values above the cap are silently clamped.
   best cluster config and (optionally) add body notes. Returns
   `(string_configs, pattern)`.
 - `find_scalar_runs(root, scale, max_capo=4, max_distinct_capos=2,
-  max_step=2, allow_one_minor_third=True, fret_max=22)` —
-  enumerate capo + fingering combinations whose picked sequence (one
-  note per string, low to high) is six consecutive scale tones
-  ascending in m2/M2 steps (with optionally a single m3 hop). Each
-  string contributes either its drone or one body fret above the
-  capo bar.
+  max_step=2, allow_one_minor_third=True, max_body_span=7, fret_max=22)` —
+  enumerate capo + fingering combinations whose upper five strings
+  ascend stepwise (m2/M2 steps, with optionally one m3) and whose
+  lowest string is a bass pedal beneath. Body fingerings fit a
+  holdable chord shape (`max_body_span` semitones across all fretted
+  positions). Each string contributes its drone or one body fret
+  above the capo bar.
 - `generate_scalar_run(root, scale, …)` — pick the best run, return
   `(string_configs, pattern)`.
 
@@ -141,12 +142,11 @@ caller-passed values above the cap are silently clamped.
 - `generate_3nps_and_render(root, scale, …)` — 3NPS, verified.
 - `generate_arpeggio_and_render(root, scale, …)` — arpeggio, verified.
 - `generate_scalar_run_and_render(root, scale, …)` — **scalar-run mode**:
-  search the spider-capo + fingering space for a combination whose six
-  notes (one per string, low to high), when picked in sequence, form
-  an ascending stepwise scale fragment of six consecutive scale-tones.
-  Adjacent intervals are m2/M2; `allow_one_minor_third=True` lets one
-  m3 hop in for scales whose neighbouring tones are a minor third apart
-  (harmonic minor etc.). See "Scalar-run mode" below.
+  the upper five strings form an ascending stepwise scale fragment
+  (m2/M2 steps; one m3 hop allowed for scales like harmonic minor),
+  with the lowest string sounding beneath as a bass pedal. Body
+  fingerings fit a holdable chord shape (default `max_body_span=7`
+  frets). See "Scalar-run mode" below.
 - `generate_cluster_and_render(root, scale, …)` — **cluster mode**: search the
   spider-capo space for a configuration whose six drone pitches form six
   consecutive scale-tones (a stacked-seconds cluster chord when strummed).
@@ -299,28 +299,34 @@ Mix shapes and profiles: e.g. arch shape + alternating stretch, or sweep + shrin
   (e.g. the required first pitch class lies past `fret_max`), drop the
   continuity constraint, then the root-on-low-E constraint, then relax span.
 
-### Scalar-run mode (capo + fingering ascending run across strings)
-- **Idea**: each string contributes one note when picked in sequence (low to
-  high) — its drone (open or capo) OR a single fretted in-scale note above
-  the capo bar. The six contributions form an ascending stepwise run of
-  six consecutive scale-tones.
-- This is what cluster mode *can't* deliver from drones alone (the natural
-  P4/M3 string intervals can't be compressed to seconds across five string
-  boundaries with a 4-fret capo budget). Adding one fingering per string
-  re-uses the body of the neck to bridge the gaps.
-- Knobs: `max_step` (default 2 = M2; bumps in m3 sometimes appear with
-  `allow_one_minor_third=True` for scales like harmonic minor whose
-  neighbouring tones are 3 semitones apart). `fret_max` (default 22)
-  caps the reach for body notes.
-- Ranking prefers, in order: no m3 hop > more drones used (fewer
-  fingerings) > fewer distinct capo frets > lower top capo > lower top
-  body fret > lower starting pitch.
-- Body frets across the six strings typically *descend* string-by-string
-  (the geometry is forced — the body has to absorb the open-string interval
-  back down to a second on every boundary), so the pattern often spans
-  10+ frets. That's fine when picked sequentially; it's NOT a strummable
-  chord shape (a strummable cluster lives in cluster mode instead).
-- Works under `use_tuning('bass_6')`.
+### Scalar-run mode (capo + fingering ascending run, bass pedal + holdable chord)
+- **Idea**: the **upper five strings** form an ascending stepwise scale
+  fragment (m2/M2 steps, with optionally a single m3 hop), and the
+  **lowest string** sounds beneath as a bass pedal at any in-scale pitch
+  ≤ the second string's pitch. Each upper string contributes one note —
+  drone (open/capo) or a single fretted note above the capo bar.
+- Decoupling the bass from the stepwise run is what makes the pattern
+  reachable. The natural P4/M3 string intervals can't be compressed
+  to seconds across all five string boundaries with a 4-fret capo
+  budget, so requiring strict-stepwise across all six strings would
+  force every string to be fretted with a fret-span of 10+ semitones —
+  unholdable. Letting the low string drop free (it goes wider than a
+  third below the next note, typically an octave-and-a-bit) means only
+  the upper five must stepwise-ascend, and the body fingerings can fit
+  a holdable chord shape.
+- `max_body_span` caps the total fret span across all body notes
+  (default 7). Tighter (4-5) yields no solutions; 6 covers about half
+  the heptatonic scales; 7 covers all common heptatonic scales. Bass
+  (uniform P4 intervals across all five boundaries) needs ≥ 8.
+- Ranking prefers, in order: no m3 hop > smaller body span > more
+  drones used > fewer distinct capo frets > lower top capo.
+- Typical guitar shape under `max_capo=4`: capo at fret 3 or 4 on the
+  B string, body fingerings on the A/D/G strings at descending frets
+  (~12/9/6), drone E top and bottom. Strumming low-to-high produces a
+  bass octave pedal under an ascending stepwise voicing on the upper
+  five strings.
+- Works under `use_tuning('bass_6')`; bass typically needs
+  `max_body_span=8`.
 
 ### Cluster mode (capo-driven stacked-seconds drone chord)
 - **Idea**: pick spider-capo positions so that the six open/capo drones land on

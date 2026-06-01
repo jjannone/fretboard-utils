@@ -426,9 +426,9 @@ def test_open_midi_diffs_match_open_strings():
         assert midi % 12 == OPEN_STRINGS[s], f"{s}: midi {midi} % 12 != pc {OPEN_STRINGS[s]}"
 
 
-def test_scalar_run_sequence_ascends_stepwise():
-    """Every run's picked sequence is six consecutive scale tones with each
-    adjacent step in {1, 2} semitones (or 3 if allow_one_minor_third)."""
+def test_scalar_run_upper_five_strings_ascend_stepwise():
+    """The upper five strings of a run form five consecutive scale tones,
+    ascending in m2/M2 steps (or up to one m3 if allow_one_minor_third)."""
     for scale in ['major', 'altered', 'whole_tone', 'lydian_dominant',
                   'natural_minor', 'half_whole_dim']:
         cands = find_scalar_runs('E', scale)
@@ -436,14 +436,18 @@ def test_scalar_run_sequence_ascends_stepwise():
         for c in cands[:5]:
             seq = c['sequence_midi']
             assert len(seq) == 6
-            assert all(seq[i + 1] > seq[i] for i in range(5))
             pitches = scale_pitches('E', scale)
             assert all(m % 12 in pitches for m in seq)
-            steps = [seq[i + 1] - seq[i] for i in range(5)]
+            # Upper five (indices 1..5) ascend stepwise
+            upper = seq[1:]
+            assert all(upper[i + 1] > upper[i] for i in range(4))
+            steps = [upper[i + 1] - upper[i] for i in range(4)]
+            assert all(s <= 3 for s in steps), f"{scale}: upper steps {steps}"
             m3s = [s for s in steps if s > 2]
-            assert all(s <= 3 for s in steps), f"{scale}: steps {steps}"
             assert len(m3s) <= 1, f"{scale}: multiple m3 steps {steps}"
             assert c['has_minor_third'] == (len(m3s) == 1)
+            # Bass pedal sits at or below the first upper note
+            assert seq[0] <= seq[1]
 
 
 def test_scalar_run_diagram_picks_correct_pitches():
@@ -463,6 +467,16 @@ def test_scalar_run_diagram_picks_correct_pitches():
                 f"{scale} string {s}: got {actual}, expected {c['sequence_midi'][i]}"
 
 
+def test_scalar_run_body_span_within_limit():
+    """No run violates its max_body_span constraint when results exist."""
+    for span in [7, 8, 10]:
+        for scale in ['major', 'altered', 'lydian_dominant']:
+            cands = find_scalar_runs('E', scale, max_body_span=span)
+            assert cands, f"{scale} span={span}: no runs"
+            for c in cands[:5]:
+                assert c['body_span'] <= span
+
+
 def test_scalar_run_diagram_verifies():
     """The rendered run diagram verifies and respects the capo-bar floor."""
     for scale in ['major', 'altered', 'lydian_dominant', 'harmonic_minor']:
@@ -473,13 +487,16 @@ def test_scalar_run_diagram_verifies():
 
 
 def test_scalar_run_bass_tuning():
-    """Scalar-run finder works on bass (BEADGC)."""
+    """Scalar-run finder works on bass (BEADGC). Bass open strings are
+    uniformly a P4 apart so the body geometry forces a wider span; pass
+    max_body_span=8."""
     with use_tuning('bass_6'):
-        cands = find_scalar_runs('E', 'altered')
+        cands = find_scalar_runs('E', 'altered', max_body_span=8)
         assert cands, "expected runs on bass"
         c = cands[0]
         assert len(c['sequence_midi']) == 6
-        assert all(c['sequence_midi'][i + 1] > c['sequence_midi'][i] for i in range(5))
+        upper = c['sequence_midi'][1:]
+        assert all(upper[i + 1] > upper[i] for i in range(4))
 
 
 if __name__ == '__main__':
