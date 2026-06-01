@@ -1230,7 +1230,7 @@ def generate_cluster(root_name: str, scale_name: str, *,
 
 
 def find_scalar_runs(root_name: str, scale_name: str, *,
-                     max_capo: int = 4, max_distinct_capos: int = 2,
+                     max_capo: int = 5, max_distinct_capos: int = 2,
                      max_step: int = 2, allow_one_minor_third: bool = True,
                      max_body_span: int = 7, fret_max: int = 22):
     """Find ascending stepwise scalar runs across the upper five strings,
@@ -1366,8 +1366,8 @@ def find_scalar_runs(root_name: str, scale_name: str, *,
                     'top_body': max(body_frets) if body_frets else 0,
                 })
     results.sort(key=lambda r: (
-        r['has_minor_third'],
         r['body_span'],
+        r['has_minor_third'],
         -r['drones_used'],
         len(r['capo_frets']),
         max(r['capo_frets']) if r['capo_frets'] else 0,
@@ -1377,7 +1377,7 @@ def find_scalar_runs(root_name: str, scale_name: str, *,
 
 
 def generate_scalar_run(root_name: str, scale_name: str, *,
-                        max_capo: int = 4, max_distinct_capos: int = 2,
+                        max_capo: int = 5, max_distinct_capos: int = 2,
                         max_step: int = 2, allow_one_minor_third: bool = True,
                         max_body_span: int = 7,
                         fret_max: int = 22, choose: int = 0):
@@ -1551,7 +1551,7 @@ def generate_arpeggio_and_render(root_name: str, scale_name: str,
 
 def generate_scalar_run_and_render(root_name: str, scale_name: str, *,
                                    label: str = None,
-                                   max_capo: int = 4, max_distinct_capos: int = 2,
+                                   max_capo: int = 5, max_distinct_capos: int = 2,
                                    max_step: int = 2,
                                    allow_one_minor_third: bool = True,
                                    max_body_span: int = 7,

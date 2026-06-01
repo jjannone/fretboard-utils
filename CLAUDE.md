@@ -126,14 +126,15 @@ caller-passed values above the cap are silently clamped.
 - `generate_cluster(root, scale, body_notes_per_string=0, …)` — pick the
   best cluster config and (optionally) add body notes. Returns
   `(string_configs, pattern)`.
-- `find_scalar_runs(root, scale, max_capo=4, max_distinct_capos=2,
+- `find_scalar_runs(root, scale, max_capo=5, max_distinct_capos=2,
   max_step=2, allow_one_minor_third=True, max_body_span=7, fret_max=22)` —
   enumerate capo + fingering combinations whose upper five strings
   ascend stepwise (m2/M2 steps, with optionally one m3) and whose
   lowest string is a bass pedal beneath. Body fingerings fit a
   holdable chord shape (`max_body_span` semitones across all fretted
   positions). Each string contributes its drone or one body fret
-  above the capo bar.
+  above the capo bar. Note the `max_capo=5` default — higher than
+  the global 4 — see "Scalar-run mode" for why.
 - `generate_scalar_run(root, scale, …)` — pick the best run, return
   `(string_configs, pattern)`.
 
@@ -314,17 +315,27 @@ Mix shapes and profiles: e.g. arch shape + alternating stretch, or sweep + shrin
   third below the next note, typically an octave-and-a-bit) means only
   the upper five must stepwise-ascend, and the body fingerings can fit
   a holdable chord shape.
+- **Scalar-run mode uses `max_capo=5` by default** (vs the global 4
+  used elsewhere). The extra fret of capo budget per string is the
+  difference between needing 3 body notes spanning 6-7 frets and
+  needing just 2 body notes spanning 3-4 frets. Most spider capos can
+  reach fret 5; the rule about "no single capo across all strings"
+  (which would just be a transposition) still applies.
 - `max_body_span` caps the total fret span across all body notes
-  (default 7). Tighter (4-5) yields no solutions; 6 covers about half
-  the heptatonic scales; 7 covers all common heptatonic scales. Bass
-  (uniform P4 intervals across all five boundaries) needs ≥ 8.
-- Ranking prefers, in order: no m3 hop > smaller body span > more
-  drones used > fewer distinct capo frets > lower top capo.
-- Typical guitar shape under `max_capo=4`: capo at fret 3 or 4 on the
-  B string, body fingerings on the A/D/G strings at descending frets
-  (~12/9/6), drone E top and bottom. Strumming low-to-high produces a
-  bass octave pedal under an ascending stepwise voicing on the upper
-  five strings.
+  (default 7). With `max_capo=5`: altered, whole_tone, natural minor,
+  and harmonic minor all land at span 3 with 4 drones and 2 body
+  fingerings. Major, enigmatic stay at 6 with 3 body notes.
+  Lydian dominant and half-whole diminished stay at 7. Bass (uniform
+  P4 intervals) typically needs `max_body_span=8`.
+- Ranking prefers, in order: smaller body span > no m3 hop > more
+  drones used > fewer distinct capo frets > lower top capo. Span
+  comes first because the user-facing goal of this mode is a holdable
+  chord shape; an m3 hop is cheap musically.
+- Typical guitar shape: capo at fret 3 on the B string and fret 5 on
+  the G string (or capo 4 on B alone for major/enigmatic), with body
+  fingerings on A/D at ~11/8 frets, drone E top and bottom.
+  Strumming low-to-high gives a bass octave pedal under an ascending
+  stepwise voicing on the upper five strings.
 - Works under `use_tuning('bass_6')`; bass typically needs
   `max_body_span=8`.
 
