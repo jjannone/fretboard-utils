@@ -126,11 +126,27 @@ caller-passed values above the cap are silently clamped.
 - `generate_cluster(root, scale, body_notes_per_string=0, …)` — pick the
   best cluster config and (optionally) add body notes. Returns
   `(string_configs, pattern)`.
+- `find_scalar_runs(root, scale, max_capo=4, max_distinct_capos=2,
+  max_step=2, allow_one_minor_third=True, fret_max=22)` —
+  enumerate capo + fingering combinations whose picked sequence (one
+  note per string, low to high) is six consecutive scale tones
+  ascending in m2/M2 steps (with optionally a single m3 hop). Each
+  string contributes either its drone or one body fret above the
+  capo bar.
+- `generate_scalar_run(root, scale, …)` — pick the best run, return
+  `(string_configs, pattern)`.
 
 ### Generators (high-level — return verified, rendered ASCII diagrams)
 - `generate_and_render(root, scale, …)` — 2NPS, verified.
 - `generate_3nps_and_render(root, scale, …)` — 3NPS, verified.
 - `generate_arpeggio_and_render(root, scale, …)` — arpeggio, verified.
+- `generate_scalar_run_and_render(root, scale, …)` — **scalar-run mode**:
+  search the spider-capo + fingering space for a combination whose six
+  notes (one per string, low to high), when picked in sequence, form
+  an ascending stepwise scale fragment of six consecutive scale-tones.
+  Adjacent intervals are m2/M2; `allow_one_minor_third=True` lets one
+  m3 hop in for scales whose neighbouring tones are a minor third apart
+  (harmonic minor etc.). See "Scalar-run mode" below.
 - `generate_cluster_and_render(root, scale, …)` — **cluster mode**: search the
   spider-capo space for a configuration whose six drone pitches form six
   consecutive scale-tones (a stacked-seconds cluster chord when strummed).
@@ -165,6 +181,7 @@ caller-passed values above the cap are silently clamped.
 | Higher-density single-position scale | `generate_3nps_and_render(root, scale, start_fret=…)` |
 | Chord-tone outline | `generate_arpeggio_and_render(root, scale, degrees=…)` |
 | Strum-a-cluster capo config | `generate_cluster_and_render(root, scale)` |
+| Ascending scalar run across strings | `generate_scalar_run_and_render(root, scale)` |
 | Practice set (8 diagrams) | `generate_full_set(...)` then `render_full_set(...)` |
 | Two diagrams labelled side-by-side | `side_by_side(...)` |
 | Custom pattern (build the dict yourself) | `pick_pair`/`pick_triple`/`pick_single` then `render` |
@@ -281,6 +298,29 @@ Mix shapes and profiles: e.g. arch shape + alternating stretch, or sweep + shrin
 - The fallback chain: if no continuous triple is reachable on a string
   (e.g. the required first pitch class lies past `fret_max`), drop the
   continuity constraint, then the root-on-low-E constraint, then relax span.
+
+### Scalar-run mode (capo + fingering ascending run across strings)
+- **Idea**: each string contributes one note when picked in sequence (low to
+  high) — its drone (open or capo) OR a single fretted in-scale note above
+  the capo bar. The six contributions form an ascending stepwise run of
+  six consecutive scale-tones.
+- This is what cluster mode *can't* deliver from drones alone (the natural
+  P4/M3 string intervals can't be compressed to seconds across five string
+  boundaries with a 4-fret capo budget). Adding one fingering per string
+  re-uses the body of the neck to bridge the gaps.
+- Knobs: `max_step` (default 2 = M2; bumps in m3 sometimes appear with
+  `allow_one_minor_third=True` for scales like harmonic minor whose
+  neighbouring tones are 3 semitones apart). `fret_max` (default 22)
+  caps the reach for body notes.
+- Ranking prefers, in order: no m3 hop > more drones used (fewer
+  fingerings) > fewer distinct capo frets > lower top capo > lower top
+  body fret > lower starting pitch.
+- Body frets across the six strings typically *descend* string-by-string
+  (the geometry is forced — the body has to absorb the open-string interval
+  back down to a second on every boundary), so the pattern often spans
+  10+ frets. That's fine when picked sequentially; it's NOT a strummable
+  chord shape (a strummable cluster lives in cluster mode instead).
+- Works under `use_tuning('bass_6')`.
 
 ### Cluster mode (capo-driven stacked-seconds drone chord)
 - **Idea**: pick spider-capo positions so that the six open/capo drones land on

@@ -13,6 +13,7 @@ from fretboard import (
     generate_arpeggio_and_render, generate_full_set, render_full_set,
     all_diagram_frets_in_range,
     find_cluster_drones, generate_cluster, generate_cluster_and_render,
+    find_scalar_runs, generate_scalar_run, generate_scalar_run_and_render,
     use_tuning,
     MAX_FINGER_STEP, OPEN_STRINGS, OPEN_MIDI, SCALES, NOTE_NAMES,
 )
@@ -423,6 +424,62 @@ def test_open_midi_diffs_match_open_strings():
     """OPEN_MIDI values agree with OPEN_STRINGS pitch classes (mod 12)."""
     for s, midi in OPEN_MIDI.items():
         assert midi % 12 == OPEN_STRINGS[s], f"{s}: midi {midi} % 12 != pc {OPEN_STRINGS[s]}"
+
+
+def test_scalar_run_sequence_ascends_stepwise():
+    """Every run's picked sequence is six consecutive scale tones with each
+    adjacent step in {1, 2} semitones (or 3 if allow_one_minor_third)."""
+    for scale in ['major', 'altered', 'whole_tone', 'lydian_dominant',
+                  'natural_minor', 'half_whole_dim']:
+        cands = find_scalar_runs('E', scale)
+        assert cands, f"expected scalar runs for E {scale}"
+        for c in cands[:5]:
+            seq = c['sequence_midi']
+            assert len(seq) == 6
+            assert all(seq[i + 1] > seq[i] for i in range(5))
+            pitches = scale_pitches('E', scale)
+            assert all(m % 12 in pitches for m in seq)
+            steps = [seq[i + 1] - seq[i] for i in range(5)]
+            m3s = [s for s in steps if s > 2]
+            assert all(s <= 3 for s in steps), f"{scale}: steps {steps}"
+            assert len(m3s) <= 1, f"{scale}: multiple m3 steps {steps}"
+            assert c['has_minor_third'] == (len(m3s) == 1)
+
+
+def test_scalar_run_diagram_picks_correct_pitches():
+    """Picking the diagram string-by-string low-to-high reproduces the
+    sequence_midi exactly."""
+    for scale in ['major', 'altered', 'harmonic_minor']:
+        cands = find_scalar_runs('E', scale)
+        c = cands[0]
+        cfg, pat = c['string_configs'], c['pattern']
+        for i, s in enumerate(['E', 'A', 'D', 'G', 'B', 'e']):
+            if pat[s]:  # body note present
+                fret = pat[s][0]
+                actual = OPEN_MIDI[s] + fret
+            else:  # drone (open or capo)
+                actual = OPEN_MIDI[s] + cfg.get(s, 0)
+            assert actual == c['sequence_midi'][i], \
+                f"{scale} string {s}: got {actual}, expected {c['sequence_midi'][i]}"
+
+
+def test_scalar_run_diagram_verifies():
+    """The rendered run diagram verifies and respects the capo-bar floor."""
+    for scale in ['major', 'altered', 'lydian_dominant', 'harmonic_minor']:
+        d = generate_scalar_run_and_render('E', scale)
+        cfg, _ = generate_scalar_run('E', scale)
+        assert verify(d, 'E', scale)
+        assert all_diagram_frets_in_range(d, cfg)
+
+
+def test_scalar_run_bass_tuning():
+    """Scalar-run finder works on bass (BEADGC)."""
+    with use_tuning('bass_6'):
+        cands = find_scalar_runs('E', 'altered')
+        assert cands, "expected runs on bass"
+        c = cands[0]
+        assert len(c['sequence_midi']) == 6
+        assert all(c['sequence_midi'][i + 1] > c['sequence_midi'][i] for i in range(5))
 
 
 if __name__ == '__main__':

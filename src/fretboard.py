@@ -1229,6 +1229,147 @@ def generate_cluster(root_name: str, scale_name: str, *,
     return string_configs, pattern
 
 
+def find_scalar_runs(root_name: str, scale_name: str, *,
+                     max_capo: int = 4, max_distinct_capos: int = 2,
+                     max_step: int = 2, allow_one_minor_third: bool = True,
+                     fret_max: int = 22):
+    """Find ascending stepwise scalar runs across all six strings, picked one
+    note per string low-to-high. Each string contributes either its open/capo
+    drone or a single fretted in-scale note above the capo bar; adjacent
+    pitches step by m2 or M2 (1 or 2 semitones), with optionally a single
+    m3 (3-semitone) hop allowed for scales whose natural neighbouring tones
+    are a minor third apart (harmonic minor, Hungarian, etc.).
+
+    Unlike cluster mode (drones-only stacked-seconds chord), scalar runs use
+    fingerings to bend the natural P4/M3 string intervals into seconds, so
+    six-string strict-ascending stepwise runs that are impossible from
+    drones alone become reachable.
+
+    Returns a list of dicts, ranked best-first by:
+      1. No minor-3rd hop
+      2. More drones used (fewer fingerings to fret)
+      3. Fewer distinct capo frets
+      4. Lower top capo fret
+      5. Lower top body fret (closer to nut)
+      6. Lower starting pitch (room to play higher)
+    Each result has 'string_configs', 'pattern', 'sequence_midi',
+    'capo_frets', 'has_minor_third', and 'drones_used'.
+    """
+    import itertools as _it
+    pitches = scale_pitches(root_name, scale_name)
+    strings = list(STRING_ORDER_LOW_TO_HIGH)
+    midi_low = min(OPEN_MIDI.values())
+    midi_high = max(OPEN_MIDI.values()) + fret_max
+    # Build every valid 6-tone ascending target by walking the scale upward
+    starts = [m for m in range(midi_low, midi_high + 1) if m % 12 in pitches]
+    targets = []
+    for s in starts:
+        seq = [s]
+        cur = s
+        m3_used = False
+        ok = True
+        for _ in range(5):
+            n = cur + 1
+            while n <= midi_high and n % 12 not in pitches:
+                n += 1
+            if n > midi_high:
+                ok = False
+                break
+            step = n - cur
+            if step > max_step:
+                if step == 3 and allow_one_minor_third and not m3_used:
+                    m3_used = True
+                else:
+                    ok = False
+                    break
+            seq.append(n)
+            cur = n
+        if ok:
+            targets.append((tuple(seq), m3_used))
+    results = []
+    seen = set()
+    for fret_tuple in _it.product(range(max_capo + 1), repeat=6):
+        distinct = {f for f in fret_tuple if f != 0}
+        if len(distinct) > max_distinct_capos:
+            continue
+        capo_max = max(fret_tuple)
+        body_floor = capo_max + 1 if capo_max > 0 else 1
+        playable = []
+        for i, s in enumerate(strings):
+            opts = {}
+            drone = OPEN_MIDI[s] + fret_tuple[i]
+            if drone % 12 in pitches:
+                opts[drone] = (fret_tuple[i], True)
+            for f in range(max(body_floor, fret_tuple[i] + 1), fret_max + 1):
+                if (OPEN_STRINGS[s] + f) % 12 in pitches:
+                    m = OPEN_MIDI[s] + f
+                    opts.setdefault(m, (f, False))
+            playable.append(opts)
+        for tgt, has_m3 in targets:
+            choice = []
+            ok = True
+            for i in range(6):
+                if tgt[i] in playable[i]:
+                    choice.append(playable[i][tgt[i]])
+                else:
+                    ok = False
+                    break
+            if not ok:
+                continue
+            cfg = {s: f for s, f in zip(strings, fret_tuple) if f != 0}
+            pattern = {s: () for s in strings}
+            drones_used = 0
+            for s, (fret, is_drone) in zip(strings, choice):
+                if is_drone:
+                    drones_used += 1
+                else:
+                    pattern[s] = (fret,)
+            key = (tuple(tgt), tuple(sorted(distinct)),
+                   tuple(c[0] for c in choice))
+            if key in seen:
+                continue
+            seen.add(key)
+            body_frets = [c[0] for c in choice if not c[1]]
+            results.append({
+                'string_configs': cfg,
+                'pattern': pattern,
+                'sequence_midi': list(tgt),
+                'capo_frets': sorted(distinct),
+                'has_minor_third': has_m3,
+                'drones_used': drones_used,
+                'top_body': max(body_frets) if body_frets else 0,
+            })
+    results.sort(key=lambda r: (
+        r['has_minor_third'],
+        -r['drones_used'],
+        len(r['capo_frets']),
+        max(r['capo_frets']) if r['capo_frets'] else 0,
+        r['top_body'],
+        r['sequence_midi'][0],
+    ))
+    return results
+
+
+def generate_scalar_run(root_name: str, scale_name: str, *,
+                        max_capo: int = 4, max_distinct_capos: int = 2,
+                        max_step: int = 2, allow_one_minor_third: bool = True,
+                        fret_max: int = 22, choose: int = 0):
+    """Pick a scalar-run capo + fingering combination. Returns
+    (string_configs, pattern). Raises ValueError if no run is found."""
+    cands = find_scalar_runs(root_name, scale_name,
+                             max_capo=max_capo,
+                             max_distinct_capos=max_distinct_capos,
+                             max_step=max_step,
+                             allow_one_minor_third=allow_one_minor_third,
+                             fret_max=fret_max)
+    if not cands:
+        raise ValueError(
+            f"No scalar-run configuration found for {root_name} {scale_name}"
+        )
+    idx = choose if 0 <= choose < len(cands) else 0
+    return cands[idx]['string_configs'], cands[idx]['pattern']
+
+
 def render(pattern: dict, label: str = "", width: int = 20,
            string_configs: dict = None) -> str:
     """Render a {string: tuple_of_frets} pattern as a fretboard-faithful diagram.
@@ -1377,6 +1518,34 @@ def generate_arpeggio_and_render(root_name: str, scale_name: str,
     diagram = render(pattern, label, width=width, string_configs=string_configs)
     if not verify(diagram, root_name, scale_name, label):
         raise RuntimeError(f"Arpeggio diagram failed verification: {label}")
+    return diagram
+
+
+def generate_scalar_run_and_render(root_name: str, scale_name: str, *,
+                                   label: str = None,
+                                   max_capo: int = 4, max_distinct_capos: int = 2,
+                                   max_step: int = 2,
+                                   allow_one_minor_third: bool = True,
+                                   fret_max: int = 22,
+                                   choose: int = 0,
+                                   width: int = 20) -> str:
+    """One-shot: choose a scalar-run capo + fingering combo and render the
+    diagram, verified. Picking the strings low-to-high produces an ascending
+    stepwise scale fragment; the spider capos retune some strings so their
+    open/capo pitch sits inside the run, while fingerings on the other
+    strings provide the remaining notes."""
+    string_configs, pattern = generate_scalar_run(
+        root_name, scale_name,
+        max_capo=max_capo, max_distinct_capos=max_distinct_capos,
+        max_step=max_step, allow_one_minor_third=allow_one_minor_third,
+        fret_max=fret_max, choose=choose,
+    )
+    _validate_capo_count(string_configs)
+    if label is None:
+        label = f"{root_name} {scale_name.replace('_', ' ').title()} run"
+    diagram = render(pattern, label, width=width, string_configs=string_configs)
+    if not verify(diagram, root_name, scale_name, label):
+        raise RuntimeError(f"Scalar-run diagram failed verification: {label}")
     return diagram
 
 
