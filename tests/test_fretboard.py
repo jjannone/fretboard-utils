@@ -12,7 +12,9 @@ from fretboard import (
     render, generate_and_render, generate_3nps_and_render,
     generate_arpeggio_and_render, generate_full_set, render_full_set,
     all_diagram_frets_in_range,
-    MAX_FINGER_STEP, OPEN_STRINGS, SCALES, NOTE_NAMES,
+    find_cluster_drones, generate_cluster, generate_cluster_and_render,
+    use_tuning,
+    MAX_FINGER_STEP, OPEN_STRINGS, OPEN_MIDI, SCALES, NOTE_NAMES,
 )
 
 
@@ -368,6 +370,59 @@ def test_render_full_set_layout():
     # 3 sections separated by '\n\n'
     sections = out.split('\n\n')
     assert len(sections) == 3, f"Expected 3 sections, got {len(sections)}"
+
+
+def test_cluster_drones_form_contiguous_scale_block():
+    """Every config returned by find_cluster_drones has six distinct drone
+    pitch classes that are six consecutive scale-tones (with octave wrap)."""
+    for scale in ['major', 'altered', 'enigmatic', 'lydian_dominant', 'whole_tone']:
+        cands = find_cluster_drones('E', scale)
+        assert cands, f"expected cluster configs for E {scale}"
+        scale_pcs = sorted(scale_pitches('E', scale))
+        n = len(scale_pcs)
+        valid_blocks = [frozenset(scale_pcs[(start + k) % n] for k in range(6))
+                        for start in range(n)]
+        for c in cands:
+            assert len(set(c['drone_pcs'])) == 6
+            assert frozenset(c['drone_pcs']) in valid_blocks, \
+                f"{scale}: {c['drone_pcs']} is not a contiguous block"
+
+
+def test_cluster_capo_limits_respected():
+    """No cluster config uses more than 2 distinct nonzero capo frets, and
+    every capo fret is within 0..max_capo."""
+    for scale in ['major', 'altered', 'lydian_dominant', 'enigmatic', 'half_whole_dim']:
+        for c in find_cluster_drones('E', scale, max_capo=4, max_distinct_capos=2):
+            assert len(c['capo_frets']) <= 2
+            assert all(1 <= f <= 4 for f in c['capo_frets'])
+
+
+def test_cluster_diagram_verifies_with_body_notes():
+    """Adding body notes still yields a diagram whose every fretted note is
+    in scale and above the highest capo bar."""
+    for scale in ['major', 'altered', 'lydian_dominant']:
+        d = generate_cluster_and_render('E', scale, body_notes_per_string=1)
+        cfg, _ = generate_cluster('E', scale, body_notes_per_string=1)
+        assert verify(d, 'E', scale)
+        assert all_diagram_frets_in_range(d, cfg)
+
+
+def test_cluster_bass_tuning():
+    """Cluster finder works inside use_tuning('bass_6')."""
+    with use_tuning('bass_6'):
+        cands = find_cluster_drones('E', 'altered')
+        assert cands, "expected at least one cluster config on bass"
+        # Every drone is in scale
+        pcs = scale_pitches('E', 'altered')
+        for c in cands:
+            for pc in c['drone_pcs']:
+                assert pc in pcs
+
+
+def test_open_midi_diffs_match_open_strings():
+    """OPEN_MIDI values agree with OPEN_STRINGS pitch classes (mod 12)."""
+    for s, midi in OPEN_MIDI.items():
+        assert midi % 12 == OPEN_STRINGS[s], f"{s}: midi {midi} % 12 != pc {OPEN_STRINGS[s]}"
 
 
 if __name__ == '__main__':

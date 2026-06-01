@@ -689,6 +689,15 @@ _TUNING_PRESETS = {
                {'B': 11, 'E': 4, 'A': 9, 'D': 2, 'G': 7, 'C': 0}),
 }
 
+# Open-string MIDI pitches per tuning (E2 = 40, middle-C = 60). Used by the
+# cluster finder, which needs absolute pitch (not just pitch class) to score
+# whether drones ascend monotonically when strummed.
+_OPEN_MIDI_PRESETS = {
+    'guitar': {'E': 40, 'A': 45, 'D': 50, 'G': 55, 'B': 59, 'e': 64},
+    'bass_6': {'B': 23, 'E': 28, 'A': 33, 'D': 38, 'G': 43, 'C': 48},
+}
+OPEN_MIDI = dict(_OPEN_MIDI_PRESETS['guitar'])
+
 
 @contextmanager
 def use_tuning(name: str):
@@ -704,22 +713,23 @@ def use_tuning(name: str):
     lowest string (B for bass, E for guitar).
     """
     global OPEN_STRINGS, STRING_ORDER_LOW_TO_HIGH, STRING_ORDER_DISPLAY
-    global DIAGRAM_LINE_RE, STRETCH_PROFILES
+    global DIAGRAM_LINE_RE, STRETCH_PROFILES, OPEN_MIDI
     if name not in _TUNING_PRESETS:
         raise ValueError(f"Unknown tuning {name!r}; known: {list(_TUNING_PRESETS)}")
     saved = (OPEN_STRINGS, STRING_ORDER_LOW_TO_HIGH, STRING_ORDER_DISPLAY,
-             DIAGRAM_LINE_RE, STRETCH_PROFILES)
+             DIAGRAM_LINE_RE, STRETCH_PROFILES, OPEN_MIDI)
     order, opens = _TUNING_PRESETS[name]
     OPEN_STRINGS = dict(opens)
     STRING_ORDER_LOW_TO_HIGH = list(order)
     STRING_ORDER_DISPLAY = list(reversed(order))
     DIAGRAM_LINE_RE = re.compile(rf"^([{''.join(order)}])([|0-9Xx]?)(.*?)\|?$")
     STRETCH_PROFILES = _build_stretch_profiles(order)
+    OPEN_MIDI = dict(_OPEN_MIDI_PRESETS[name])
     try:
         yield
     finally:
         (OPEN_STRINGS, STRING_ORDER_LOW_TO_HIGH, STRING_ORDER_DISPLAY,
-         DIAGRAM_LINE_RE, STRETCH_PROFILES) = saved
+         DIAGRAM_LINE_RE, STRETCH_PROFILES, OPEN_MIDI) = saved
 
 
 def generate_2nps(root_name: str, scale_name: str, start_fret: int = 3,
@@ -1114,6 +1124,111 @@ def generate_arpeggio(root_name: str, scale_name: str, start_fret: int = 3,
     return pattern
 
 
+def find_cluster_drones(root_name: str, scale_name: str, *,
+                        max_capo: int = 4, max_distinct_capos: int = 2):
+    """Search spider-capo configurations whose six open/capo drones form a
+    contiguous block of scale tones — a 'cluster of seconds' chord voicing.
+
+    Each string's drone is open_pitch + capo_fret (with capo_fret in
+    0..max_capo). The set of six drone pitch classes must be six adjacent
+    scale-degrees (the scale is treated as a cyclic ladder, so blocks may
+    wrap through the octave). With max_capo=4 and standard tunings, a
+    strict ascending stepwise run across all six strings is mathematically
+    impossible (the capo budget can't compress the open-string fourths
+    down to seconds across five jumps), but the six drones can still form
+    a stacked-seconds *chord* when strummed -- just not in stepwise order.
+
+    Returns a list of dicts, ranked best-first:
+      - 'string_configs': {string_letter: fret, ...}  (nonzero capos only)
+      - 'drone_pcs':      [pc, ...]  six pitch classes in string order, low to high
+      - 'drones_midi':    [midi, ...]  absolute pitches in string order
+      - 'capo_frets':     sorted list of distinct nonzero capo frets used
+      - 'top_capo':       highest capo fret in the config
+      - 'ascending':      True iff drones strictly ascend across strings
+    """
+    import itertools as _it
+    scale_pcs = sorted(scale_pitches(root_name, scale_name))
+    n_scale = len(scale_pcs)
+    if n_scale < 6:
+        return []
+    strings = list(STRING_ORDER_LOW_TO_HIGH)
+    blocks = {frozenset(scale_pcs[(start + k) % n_scale] for k in range(6))
+              for start in range(n_scale)}
+    out = []
+    seen = set()
+    for fret_tuple in _it.product(range(max_capo + 1), repeat=6):
+        distinct = {f for f in fret_tuple if f != 0}
+        if not distinct or len(distinct) > max_distinct_capos:
+            continue
+        drone_pcs = tuple((OPEN_STRINGS[s] + f) % 12
+                          for s, f in zip(strings, fret_tuple))
+        if len(set(drone_pcs)) != 6:
+            continue
+        if frozenset(drone_pcs) not in blocks:
+            continue
+        midis = tuple(OPEN_MIDI[s] + f for s, f in zip(strings, fret_tuple))
+        ascending = all(midis[i + 1] > midis[i] for i in range(5))
+        key = (frozenset(drone_pcs), tuple(sorted(distinct)))
+        if key in seen:
+            continue
+        seen.add(key)
+        cfg = {s: f for s, f in zip(strings, fret_tuple) if f != 0}
+        out.append({
+            'string_configs': cfg,
+            'drone_pcs': list(drone_pcs),
+            'drones_midi': list(midis),
+            'capo_frets': sorted(distinct),
+            'top_capo': max(distinct),
+            'ascending': ascending,
+        })
+    out.sort(key=lambda c: (not c['ascending'], len(c['capo_frets']), c['top_capo']))
+    return out
+
+
+def generate_cluster(root_name: str, scale_name: str, *,
+                     max_capo: int = 4, max_distinct_capos: int = 2,
+                     body_notes_per_string: int = 0,
+                     body_fret_min: int = None, body_fret_max: int = 22,
+                     choose: int = 0):
+    """Pick a cluster-of-seconds spider-capo configuration and (optionally)
+    add body notes that continue the scale upward from each drone.
+
+    body_notes_per_string=0 (default) yields a drones-only diagram: the capo
+    config is the entire idea. Any positive value adds that many fretted
+    in-scale notes per string, picked as the lowest reachable scale tones
+    above the string's drone (so the body extends the scalar run upward).
+
+    Returns (string_configs, pattern). Raises ValueError if no cluster found.
+    """
+    candidates = find_cluster_drones(root_name, scale_name,
+                                     max_capo=max_capo,
+                                     max_distinct_capos=max_distinct_capos)
+    if not candidates:
+        raise ValueError(
+            f"No cluster-drone configuration found for {root_name} {scale_name}"
+        )
+    info = candidates[choose if 0 <= choose < len(candidates) else 0]
+    string_configs = info['string_configs']
+    pitches = scale_pitches(root_name, scale_name)
+    if body_fret_min is None:
+        body_fret_min = _effective_fret_min(string_configs, base_min=3)
+    pattern = {}
+    for s in STRING_ORDER_LOW_TO_HIGH:
+        if body_notes_per_string <= 0:
+            pattern[s] = ()
+            continue
+        capo_f = string_configs.get(s, 0)
+        drone_midi = OPEN_MIDI[s] + capo_f
+        in_scale = frets_in_scale(s, pitches, body_fret_min, body_fret_max,
+                                  capo_fret=capo_f)
+        # The highest capo bar blocks every string at or below its fret, so
+        # uncapo'd strings still cannot use frets below body_fret_min.
+        in_scale = [f for f in in_scale if f >= body_fret_min]
+        above_drone = sorted(f for f in in_scale if OPEN_MIDI[s] + f > drone_midi)
+        pattern[s] = tuple(above_drone[:body_notes_per_string])
+    return string_configs, pattern
+
+
 def render(pattern: dict, label: str = "", width: int = 20,
            string_configs: dict = None) -> str:
     """Render a {string: tuple_of_frets} pattern as a fretboard-faithful diagram.
@@ -1136,7 +1251,7 @@ def render(pattern: dict, label: str = "", width: int = 20,
     shift = _max_capo(string_configs)
 
     if pattern:
-        max_fret = max(max(p) for p in pattern.values())
+        max_fret = max((max(p) for p in pattern.values() if p), default=shift)
         needed = (max_fret - shift) + 4
         if width < needed:
             width = needed
@@ -1262,6 +1377,32 @@ def generate_arpeggio_and_render(root_name: str, scale_name: str,
     diagram = render(pattern, label, width=width, string_configs=string_configs)
     if not verify(diagram, root_name, scale_name, label):
         raise RuntimeError(f"Arpeggio diagram failed verification: {label}")
+    return diagram
+
+
+def generate_cluster_and_render(root_name: str, scale_name: str, *,
+                                label: str = None,
+                                max_capo: int = 4, max_distinct_capos: int = 2,
+                                body_notes_per_string: int = 0,
+                                choose: int = 0,
+                                width: int = 20) -> str:
+    """One-shot: pick a cluster-of-seconds capo configuration and render it,
+    verified. The capo positions retune the open strings so that their pitch
+    classes span six adjacent scale-degrees, producing a stacked-seconds
+    chord when strummed. Body notes (optional) extend the scale upward.
+    """
+    string_configs, pattern = generate_cluster(
+        root_name, scale_name,
+        max_capo=max_capo, max_distinct_capos=max_distinct_capos,
+        body_notes_per_string=body_notes_per_string,
+        choose=choose,
+    )
+    _validate_capo_count(string_configs)
+    if label is None:
+        label = f"{root_name} {scale_name.replace('_', ' ').title()} cluster"
+    diagram = render(pattern, label, width=width, string_configs=string_configs)
+    if not verify(diagram, root_name, scale_name, label):
+        raise RuntimeError(f"Cluster diagram failed verification: {label}")
     return diagram
 
 

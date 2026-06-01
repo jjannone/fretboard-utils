@@ -44,6 +44,9 @@ below already exist in [src/fretboard.py](src/fretboard.py). Use them.
 ### Constants and tables
 - `OPEN_STRINGS` — dict mapping string letter to open pitch class (the *active*
   tuning; guitar EADGBe by default).
+- `OPEN_MIDI` — dict mapping string letter to absolute open MIDI number (E2 = 40
+  for guitar). Used by the cluster finder, which needs absolute pitch to check
+  whether the strummed drones ascend across the strings.
 - `NOTE_NAMES` — 12 sharps-only note names.
 - `STRING_ORDER_LOW_TO_HIGH`, `STRING_ORDER_DISPLAY` — string letter orderings
   (also reflect the active tuning).
@@ -115,11 +118,27 @@ caller-passed values above the cap are silently clamped.
 - `generate_arpeggio(root, scale, …)` — chord-tone pattern. Tries a 2-chord-tone pair
   within `max_stretch` (default `MAX_FINGER_STEP`) on each string and falls back to
   one chord tone where no pair fits. Default `degrees=(1, 3, 5, 7)`.
+- `find_cluster_drones(root, scale, max_capo=4, max_distinct_capos=2)` —
+  enumerate every spider-capo configuration whose six drone pitch classes form
+  a contiguous block of scale tones. Returns ranked list of dicts with
+  `'string_configs'`, `'drone_pcs'`, `'drones_midi'`, `'capo_frets'`,
+  `'top_capo'`, `'ascending'`.
+- `generate_cluster(root, scale, body_notes_per_string=0, …)` — pick the
+  best cluster config and (optionally) add body notes. Returns
+  `(string_configs, pattern)`.
 
 ### Generators (high-level — return verified, rendered ASCII diagrams)
 - `generate_and_render(root, scale, …)` — 2NPS, verified.
 - `generate_3nps_and_render(root, scale, …)` — 3NPS, verified.
 - `generate_arpeggio_and_render(root, scale, …)` — arpeggio, verified.
+- `generate_cluster_and_render(root, scale, …)` — **cluster mode**: search the
+  spider-capo space for a configuration whose six drone pitches form six
+  consecutive scale-tones (a stacked-seconds cluster chord when strummed).
+  See "Cluster mode" below for the math and what it does and doesn't deliver.
+  Knobs: `max_capo` (default 4), `max_distinct_capos` (default 2),
+  `body_notes_per_string` (default 0 — drones-only diagram; >0 adds that many
+  fretted in-scale notes per string, picked just above each drone), `choose`
+  (which ranked candidate to use; 0 = best).
 - `generate_full_set(root, scale, string_configs=None, second_capo_fret=None, …)` →
   dict with three labeled sections: `'two_note'` (**6 variants**: tight, wide,
   alternating, descending, climbing, fast climbing), `'three_note'` (3 ascending
@@ -145,6 +164,7 @@ caller-passed values above the cap are silently clamped.
 | Quick one-off diagram for a scale | `generate_and_render(root, scale)` |
 | Higher-density single-position scale | `generate_3nps_and_render(root, scale, start_fret=…)` |
 | Chord-tone outline | `generate_arpeggio_and_render(root, scale, degrees=…)` |
+| Strum-a-cluster capo config | `generate_cluster_and_render(root, scale)` |
 | Practice set (8 diagrams) | `generate_full_set(...)` then `render_full_set(...)` |
 | Two diagrams labelled side-by-side | `side_by_side(...)` |
 | Custom pattern (build the dict yourself) | `pick_pair`/`pick_triple`/`pick_single` then `render` |
@@ -261,6 +281,33 @@ Mix shapes and profiles: e.g. arch shape + alternating stretch, or sweep + shrin
 - The fallback chain: if no continuous triple is reachable on a string
   (e.g. the required first pitch class lies past `fret_max`), drop the
   continuity constraint, then the root-on-low-E constraint, then relax span.
+
+### Cluster mode (capo-driven stacked-seconds drone chord)
+- **Idea**: pick spider-capo positions so that the six open/capo drones land on
+  six adjacent scale-tones (a "cluster of seconds" chord voicing) — the
+  alternative to the 3rds-and-4ths voicings that natural tunings produce.
+- **Hard fact (don't promise more than this delivers)**: with `max_capo=4` and
+  any standard tuning, a strictly stepwise ascending run across all six
+  strings is mathematically impossible. The natural open-string intervals
+  (P4 / M3) total ≥ 24 semitones across the five string boundaries; capos
+  add only 0..4 frets per string, so the capo budget cannot compress those
+  intervals down to seconds across five jumps. The six drones can still form
+  a **stacked-seconds chord** when strummed, but the strummed *order* will
+  include some jumps wider than a second.
+- `find_cluster_drones` brute-forces all `(max_capo+1)^6` capo combinations,
+  filters to those with ≤ `max_distinct_capos` distinct nonzero frets and
+  six distinct drone pcs that form a contiguous scale-tone block, and ranks:
+  1. configs whose drone midi sequence strictly ascends across strings,
+  2. then fewer distinct capo frets (1 > 2),
+  3. then lower top capo fret (more playable).
+- `generate_cluster` picks the best (or `choose=k`-th best) config. By
+  default `body_notes_per_string=0` — the diagram is the capo config itself,
+  with empty body. Setting it to `1` adds one in-scale fret per string just
+  above each drone, picked above `body_fret_min` (which respects the highest
+  capo bar) — useful as a scalar continuation when picking the strings.
+- Works under `use_tuning('bass_6')` (BEADGC) too. Bass has uniform P4
+  intervals so cluster solutions are still findable; capos required tend to
+  be higher than on guitar.
 
 ### Arpeggio picker (pair-first, chord-forming, full scale)
 - `generate_arpeggio` pulls from the **full scale** (not a fixed chord-tone
