@@ -29,20 +29,18 @@ from contextlib import contextmanager
 # Constants
 # ---------------------------------------------------------------------------
 
-# Open string pitch classes (0=C, 1=C#, ..., 11=B)
-OPEN_STRINGS = {
-    'E': 4,   # low E
-    'A': 9,
-    'D': 2,
-    'G': 7,
-    'B': 11,
-    'e': 4,   # high e
-}
+# Strings are identified by integer POSITION (0 = lowest, N-1 = highest).
+# STRING_NOTES gives the display letter at each position (duplicates allowed,
+# since duplicates are common in real tunings: drop-D's two D's, DADGAD's
+# three D's, all-E's six E's). OPEN_STRINGS and OPEN_MIDI are parallel
+# position-indexed lists giving pitch class and absolute MIDI number.
+STRING_NOTES = ['E', 'A', 'D', 'G', 'B', 'e']           # display letters
+OPEN_STRINGS = [4, 9, 2, 7, 11, 4]                       # pitch classes
 
 NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 
-STRING_ORDER_LOW_TO_HIGH = ['E', 'A', 'D', 'G', 'B', 'e']
-STRING_ORDER_DISPLAY = ['e', 'B', 'G', 'D', 'A', 'E']  # high to low for rendering
+STRING_ORDER_LOW_TO_HIGH = [0, 1, 2, 3, 4, 5]            # positions
+STRING_ORDER_DISPLAY = [5, 4, 3, 2, 1, 0]                # positions, high to low
 
 # Maximum semitone distance between adjacent fingered notes on one string.
 # Default is a minor 3rd (3 semitones) — wider than this is hard to reach
@@ -123,21 +121,65 @@ def scale_pitches(root_name: str, scale_name: str) -> set:
     return {(root + i) % 12 for i in SCALES[scale_name]}
 
 
-def pitch_at(string_name: str, fret: int) -> int:
+def _to_pos(string) -> int:
+    """Resolve a string identifier to an integer position (0..N-1).
+
+    Accepts an int position directly, or a display letter — but a letter is
+    only resolvable when it appears exactly once in the active tuning. In
+    a duplicate-letter tuning (drop-D, DADGAD, all-E, ...), pass an int
+    position instead.
+    """
+    if isinstance(string, int):
+        return string
+    positions = [i for i, n in enumerate(STRING_NOTES) if n == string]
+    if len(positions) == 1:
+        return positions[0]
+    if not positions:
+        raise ValueError(
+            f"String letter {string!r} not present in tuning "
+            f"{tuning_label()}"
+        )
+    raise ValueError(
+        f"String letter {string!r} is ambiguous in tuning {tuning_label()} "
+        f"(appears at positions {positions}); pass an int position instead "
+        f"(0 = lowest, {len(STRING_NOTES) - 1} = highest)"
+    )
+
+
+def _normalize_string_configs(string_configs):
+    """Convert a string_configs dict to int-keyed form. Accepts either int
+    position keys or display-letter keys (letters must be unambiguous in the
+    active tuning). Returns None unchanged; never mutates input."""
+    if string_configs is None:
+        return None
+    out = {}
+    for k, v in string_configs.items():
+        out[_to_pos(k)] = v
+    return out
+
+
+def tuning_label() -> str:
+    """Return a short string identifying the active tuning, e.g. 'EADGBe'
+    for guitar, 'BEADGC' for bass_6, 'DADGBe' for drop-D, 'EEEEee' for
+    all-E. Duplicate letters appear once per position they occur at."""
+    return ''.join(STRING_NOTES)
+
+
+def pitch_at(string, fret: int) -> int:
     """Return pitch class (0-11) at the given string and fret."""
-    return (OPEN_STRINGS[string_name] + fret) % 12
+    return (OPEN_STRINGS[_to_pos(string)] + fret) % 12
 
 
-def note_name(string_name: str, fret: int) -> str:
+def note_name(string, fret: int) -> str:
     """Return pitch name (e.g., 'F#') at the given string and fret."""
-    return NOTE_NAMES[pitch_at(string_name, fret)]
+    return NOTE_NAMES[pitch_at(string, fret)]
 
 
 # ---------------------------------------------------------------------------
 # Diagram parsing & rendering
 # ---------------------------------------------------------------------------
 
-DIAGRAM_LINE_RE = re.compile(r'^([EADGBe])([|0-9Xx]?)(.*?)\|?$')
+DIAGRAM_LINE_RE = re.compile(r'^\s*([EADGBe])([|0-9Xx]?)(.*?)\|?$')
 
 
 def parse_diagram(diagram: str):
@@ -168,16 +210,20 @@ def parse_diagram(diagram: str):
         if cfg.isdigit() and cfg != '0':
             shift = max(shift, int(cfg))
 
-    # Pass 2: extract notes, mapping column k to fret (k + shift).
+    # Pass 2: extract notes. Each matched line's POSITION is determined by
+    # its index in STRING_ORDER_DISPLAY (high to low), so duplicate display
+    # letters in the tuning don't introduce ambiguity.
     notes = []
-    for m in raw_lines:
-        string_name = m.group(1)
+    for idx, m in enumerate(raw_lines):
+        if idx >= len(STRING_ORDER_DISPLAY):
+            break
+        pos = STRING_ORDER_DISPLAY[idx]
         body = m.group(3)
         for i, ch in enumerate(body):
             if ch == '|':
                 break
             if ch.isdigit():
-                notes.append((string_name, i + shift, i))
+                notes.append((pos, i + shift, i))
     return notes
 
 
@@ -210,10 +256,13 @@ def verify(diagram: str, root_name: str, scale_name: str,
 # Generator
 # ---------------------------------------------------------------------------
 
-def frets_in_scale(string_name: str, pitches: set,
+def frets_in_scale(string, pitches: set,
                    fret_min: int = 3, fret_max: int = 22,
                    capo_fret: int = None):
     """All frets on this string that play a pitch in the scale.
+
+    `string` is a position (int 0..N-1) or a display letter resolvable in
+    the active tuning.
 
     capo_fret: if given, only frets above the capo are searched. The capo
     tone itself is always ringing as a drone and is shown in the prefix,
@@ -224,7 +273,8 @@ def frets_in_scale(string_name: str, pitches: set,
     max(capo_fret + 1, fret_min). This lets a higher spider-capo bar set
     a global lower bound on body frets across all strings.
     """
-    open_pc = OPEN_STRINGS[string_name]
+    pos = _to_pos(string)
+    open_pc = OPEN_STRINGS[pos]
     if capo_fret is not None:
         if capo_fret == 0:
             low = 0
@@ -244,22 +294,20 @@ def _max_capo(string_configs: dict) -> int:
                 if isinstance(v, int) and v > 0), default=0)
 
 
-def _drone_pc(string_name: str, string_configs: dict):
-    """Pitch class of the always-sounding drone on a string.
+def _drone_pc(string, string_configs: dict):
+    """Pitch class of the always-sounding drone on a string (position int).
 
-    - capo at fret N (val=N>0)   → (open + N) % 12
-    - explicit open (val=0)      → open
-    - default (no entry)         → open string drones at fret 0
-    - 'X' / '|' / None           → no drone (string is muted, fretted-only,
-                                    or excluded), returns None.
+    string_configs must be int-keyed (position) — callers should normalize
+    via _normalize_string_configs() at their public boundary.
     """
-    if string_configs and string_name in string_configs:
-        val = string_configs[string_name]
+    pos = _to_pos(string)
+    if string_configs and pos in string_configs:
+        val = string_configs[pos]
         if val is None or val == 'X' or val == '|':
             return None
         if isinstance(val, int):
-            return (OPEN_STRINGS[string_name] + val) % 12
-    return OPEN_STRINGS[string_name] % 12
+            return (OPEN_STRINGS[pos] + val) % 12
+    return OPEN_STRINGS[pos] % 12
 
 
 def _effective_fret_min(string_configs: dict, base_min: int = 3) -> int:
@@ -457,43 +505,41 @@ def capo_summary(string_configs: dict) -> str:
        'capo 1 on A,G (→A♯,G♯); capo 4 on B (→D♯)'.
        Returns 'no capo' when there are no spider capos.
     """
-    if not string_configs:
+    cfg = _normalize_string_configs(string_configs)
+    if not cfg:
         return 'no capo'
     by_fret = {}
-    for s, v in string_configs.items():
+    for pos, v in cfg.items():
         if isinstance(v, int) and v > 0:
-            by_fret.setdefault(v, []).append(s)
+            by_fret.setdefault(v, []).append(pos)
     if not by_fret:
         return 'no capo'
     parts = []
     for fret in sorted(by_fret):
-        strings = by_fret[fret]
-        notes = [NOTE_NAMES[(OPEN_STRINGS[s] + fret) % 12] for s in strings]
-        # Replace ASCII '#' with '♯' for display
+        positions = by_fret[fret]
+        letters = [STRING_NOTES[p] for p in positions]
+        notes = [NOTE_NAMES[(OPEN_STRINGS[p] + fret) % 12] for p in positions]
         notes = [n.replace('#', '♯') for n in notes]
-        parts.append(f"capo {fret} on {','.join(strings)} (→{','.join(notes)})")
+        parts.append(f"capo {fret} on {','.join(letters)} (→{','.join(notes)})")
     return '; '.join(parts)
 
 
-def drone_label(string_name: str, string_configs: dict,
+def drone_label(string, string_configs: dict,
                 root_name: str, scale_name: str) -> str:
     """Return a label like 'G#(1)', 'D(♯4)', 'C#(4)' for the drone note on a
     string, annotated with its interval from the root.
 
-    The role is the chromatic interval from the root, spelled via DEGREE_LABEL
-    (1, ♭2, 2, ♭3, 3, 4, ♯4, 5, ♯5, 6, ♭7, 7). Because every semitone has a
-    fixed label this works for any scale — including the 8-note diminished
-    scales and the 12-note chromatic scale — with no ordinal-numeral overflow,
-    and an out-of-scale drone simply reads as its own chromatic degree.
-    For X (muted) strings, the implicit open-string drone is used.
+    `string` is a position (int) or display letter (when unambiguous).
+    `string_configs` is int-keyed by position (or letter-keyed via
+    `_normalize_string_configs`).
 
-    scale_name is retained for signature stability (the interval label does not
-    depend on the scale).
+    For X (muted) strings, the implicit open-string drone is used.
     """
-    drone = _drone_pc(string_name, string_configs)
-    open_pc = OPEN_STRINGS[string_name]
-    is_muted = (string_configs and string_name in string_configs and
-                string_configs[string_name] == 'X')
+    pos = _to_pos(string)
+    cfg = _normalize_string_configs(string_configs)
+    drone = _drone_pc(pos, cfg)
+    open_pc = OPEN_STRINGS[pos]
+    is_muted = (cfg and pos in cfg and cfg[pos] == 'X')
     if drone is None:
         if is_muted:
             drone = open_pc % 12
@@ -560,28 +606,27 @@ _CHORD_TYPE_NAMES = {
 }
 
 
-def per_string_chord(string_name: str, body_frets: list,
+def per_string_chord(string, body_frets: list,
                      string_configs: dict = None) -> str:
     """Return a chord label like 'EΔ7 (157)' for drone + body notes on a string.
 
-    Recognises **triads and 7th chords only** (including their dyad fragments
-    when the 5th is implied). Dominant 7s are labelled `7`; major 7s use `Δ7`.
-    Anything outside this set — 6th chords, add9, slash chords, clusters —
-    falls back to a `Drone?` label with the raw degree list. The user's rule:
-    "triads and 7th chords" only.
+    `string` is a position (int) or display letter. Recognises **triads and
+    7th chords only**; anything else falls back to a `Drone?` label with the
+    raw degree list.
 
     For X-muted strings the implicit open-string pitch is still treated as the
-    notional root, since the player would otherwise hear it.
+    notional root.
     """
-    drone = _drone_pc(string_name, string_configs)
-    is_muted = (string_configs and string_name in string_configs and
-                string_configs[string_name] == 'X')
+    pos = _to_pos(string)
+    cfg = _normalize_string_configs(string_configs)
+    drone = _drone_pc(pos, cfg)
+    is_muted = (cfg and pos in cfg and cfg[pos] == 'X')
     if drone is None and is_muted:
-        drone = OPEN_STRINGS[string_name] % 12
+        drone = OPEN_STRINGS[pos] % 12
     if drone is None:
         return '—'
 
-    open_pc = OPEN_STRINGS[string_name]
+    open_pc = OPEN_STRINGS[pos]
     body_pcs = [(open_pc + f) % 12 for f in body_frets]
     pcs = sorted(set([drone, *body_pcs]), key=lambda p: (p - drone) % 12)
     intervals = tuple((p - drone) % 12 for p in pcs)
@@ -607,32 +652,34 @@ def decorate(diagram: str, root_name: str, scale_name: str,
     `parse_diagram` because the leading string letter is replaced. Always run
     `verify` (or any parse-based check) on the raw diagram BEFORE decorating.
     """
-    drone_labels = {s: drone_label(s, string_configs, root_name, scale_name)
-                    for s in STRING_ORDER_DISPLAY}
+    cfg = _normalize_string_configs(string_configs)
+    drone_labels = {pos: drone_label(pos, cfg, root_name, scale_name)
+                    for pos in STRING_ORDER_DISPLAY}
     label_width = max(len(lbl) for lbl in drone_labels.values()) + 2
 
     notes_by_string = {}
     if with_chords:
-        for s, fret, _col in parse_diagram(diagram):
-            notes_by_string.setdefault(s, []).append(fret)
-        chord_labels = {s: per_string_chord(s, notes_by_string.get(s, []),
-                                             string_configs)
-                        for s in STRING_ORDER_DISPLAY}
+        for pos, fret, _col in parse_diagram(diagram):
+            notes_by_string.setdefault(pos, []).append(fret)
+        chord_labels = {pos: per_string_chord(pos, notes_by_string.get(pos, []), cfg)
+                        for pos in STRING_ORDER_DISPLAY}
         chord_width = max(len(c) for c in chord_labels.values())
 
     out_lines = []
+    matched_idx = 0
     for line in diagram.split('\n'):
         if not line:
             continue
         m = DIAGRAM_LINE_RE.match(line)
-        if m:
-            s = m.group(1)        # string key (1 or 2 chars)
+        if m and matched_idx < len(STRING_ORDER_DISPLAY):
+            pos = STRING_ORDER_DISPLAY[matched_idx]
+            matched_idx += 1
             config = m.group(2)
             body_offset = m.start(3)
-            rest = line[body_offset:]  # body + closing |
-            new_line = f"{drone_labels[s]:<{label_width}}{config}{rest}"
+            rest = line[body_offset:]
+            new_line = f"{drone_labels[pos]:<{label_width}}{config}{rest}"
             if with_chords:
-                new_line += f"  {chord_labels[s]:<{chord_width}}"
+                new_line += f"  {chord_labels[pos]:<{chord_width}}"
             out_lines.append(new_line)
         else:
             out_lines.append(line)
@@ -682,11 +729,11 @@ def _build_stretch_profiles(order):
 STRETCH_PROFILES = _build_stretch_profiles(STRING_ORDER_LOW_TO_HIGH)
 
 
-# Instrument tunings. Each preset's 'letters' list is the display sequence
-# (low to high). Duplicates are allowed — _unique_letters() auto-disambiguates
-# repeated letters into internal keys by appending a position suffix
-# (['D','A','D','G','B','e'] becomes ['D1','A','D2','G','B','e']). 'pcs' and
-# 'midi' are position-indexed parallel lists.
+# Instrument tunings. 'letters' is the display sequence (low to high),
+# with duplicates allowed (drop-D's two D's, all-E's six E's, etc.).
+# 'pcs' and 'midi' are position-indexed parallel lists giving the pitch
+# class and absolute MIDI number of each open string. Strings are
+# identified internally by integer position; letters are display only.
 _TUNING_PRESETS = {
     'guitar': {
         'letters': ['E', 'A', 'D', 'G', 'B', 'e'],
@@ -732,71 +779,49 @@ _TUNING_PRESETS = {
 }
 
 
-def _unique_letters(letters):
-    """Append a position suffix (1-based among duplicates) to repeated letters.
-    Single-occurrence letters pass through unchanged.
-    Example: ['D','A','D','G','B','e'] -> ['D1','A','D2','G','B','e']."""
-    from collections import Counter
-    counts = Counter(letters)
-    seen = {}
-    out = []
-    for ltr in letters:
-        if counts[ltr] > 1:
-            seen[ltr] = seen.get(ltr, 0) + 1
-            out.append(f"{ltr}{seen[ltr]}")
-        else:
-            out.append(ltr)
-    return out
-
-
-# Display letters per internal key for the active tuning. e.g. 'D1' -> 'D'.
-STRING_DISPLAY_LETTERS = {k: k for k in ['E', 'A', 'D', 'G', 'B', 'e']}
-OPEN_MIDI = dict(zip(['E', 'A', 'D', 'G', 'B', 'e'], [40, 45, 50, 55, 59, 64]))
+OPEN_MIDI = [40, 45, 50, 55, 59, 64]  # position-indexed, parallel to STRING_NOTES
 
 
 @contextmanager
 def use_tuning(name: str):
     """Temporarily switch the active instrument tuning for generation/rendering.
 
-    Rebinds the module-level tuning globals (OPEN_STRINGS, OPEN_MIDI, the two
-    string orders, STRING_DISPLAY_LETTERS, the diagram line regex, and
+    Rebinds the module-level tuning globals (STRING_NOTES, OPEN_STRINGS,
+    OPEN_MIDI, the two string orders, the diagram line regex, and
     STRETCH_PROFILES) for the duration of the with-block, then restores them.
-    The module default is 6-string guitar, so existing callers are unaffected.
+    The module default is 6-string guitar (EADGBe).
 
-    Presets with unique letters (`'guitar'`, `'bass_6'`, `'guitar_fourths'`,
-    `'guitar_fifths'`) use single-character keys throughout. Presets with
-    duplicate display letters (`'drop_d'`, `'dadgad'`, `'all_E'`) auto-suffix
-    the internal keys with a position digit: drop-D's two D's become 'D1'
-    (low) and 'D2' (third string), DADGAD's three D's become 'D1', 'D2', 'D3',
-    and so on. STRING_DISPLAY_LETTERS maps the internal key back to the
-    user-facing letter for display purposes; tuning_label() concatenates the
-    display letters.
+    Strings are identified by integer position (0 = lowest, N-1 = highest).
+    Display letters in `STRING_NOTES` may repeat (drop-D's two D's, all-E's
+    six E's). For unambiguous-letter tunings, helpers will resolve a letter
+    argument to the matching position; for tunings with duplicate letters,
+    pass an int position.
     """
-    global OPEN_STRINGS, STRING_ORDER_LOW_TO_HIGH, STRING_ORDER_DISPLAY
-    global DIAGRAM_LINE_RE, STRETCH_PROFILES, OPEN_MIDI, STRING_DISPLAY_LETTERS
+    global STRING_NOTES, OPEN_STRINGS, OPEN_MIDI
+    global STRING_ORDER_LOW_TO_HIGH, STRING_ORDER_DISPLAY
+    global DIAGRAM_LINE_RE, STRETCH_PROFILES
     if name not in _TUNING_PRESETS:
         raise ValueError(f"Unknown tuning {name!r}; known: {list(_TUNING_PRESETS)}")
-    saved = (OPEN_STRINGS, STRING_ORDER_LOW_TO_HIGH, STRING_ORDER_DISPLAY,
-             DIAGRAM_LINE_RE, STRETCH_PROFILES, OPEN_MIDI,
-             STRING_DISPLAY_LETTERS)
+    saved = (STRING_NOTES, OPEN_STRINGS, OPEN_MIDI,
+             STRING_ORDER_LOW_TO_HIGH, STRING_ORDER_DISPLAY,
+             DIAGRAM_LINE_RE, STRETCH_PROFILES)
     preset = _TUNING_PRESETS[name]
-    raw_letters = preset['letters']
-    keys = _unique_letters(raw_letters)
-    OPEN_STRINGS = dict(zip(keys, preset['pcs']))
-    OPEN_MIDI = dict(zip(keys, preset['midi']))
-    STRING_DISPLAY_LETTERS = dict(zip(keys, raw_letters))
-    STRING_ORDER_LOW_TO_HIGH = list(keys)
-    STRING_ORDER_DISPLAY = list(reversed(keys))
+    STRING_NOTES = list(preset['letters'])
+    OPEN_STRINGS = list(preset['pcs'])
+    OPEN_MIDI = list(preset['midi'])
+    STRING_ORDER_LOW_TO_HIGH = list(range(len(STRING_NOTES)))
+    STRING_ORDER_DISPLAY = list(reversed(STRING_ORDER_LOW_TO_HIGH))
+    unique_letters = ''.join(sorted(set(STRING_NOTES)))
     DIAGRAM_LINE_RE = re.compile(
-        rf"^\s*({'|'.join(re.escape(k) for k in keys)})([|0-9Xx]?)(.*?)\|?$"
+        rf"^\s*([{re.escape(unique_letters)}])([|0-9Xx]?)(.*?)\|?$"
     )
-    STRETCH_PROFILES = _build_stretch_profiles(keys)
+    STRETCH_PROFILES = _build_stretch_profiles(STRING_ORDER_LOW_TO_HIGH)
     try:
         yield
     finally:
-        (OPEN_STRINGS, STRING_ORDER_LOW_TO_HIGH, STRING_ORDER_DISPLAY,
-         DIAGRAM_LINE_RE, STRETCH_PROFILES, OPEN_MIDI,
-         STRING_DISPLAY_LETTERS) = saved
+        (STRING_NOTES, OPEN_STRINGS, OPEN_MIDI,
+         STRING_ORDER_LOW_TO_HIGH, STRING_ORDER_DISPLAY,
+         DIAGRAM_LINE_RE, STRETCH_PROFILES) = saved
 
 
 def generate_2nps(root_name: str, scale_name: str, start_fret: int = 3,
@@ -847,6 +872,7 @@ def generate_2nps(root_name: str, scale_name: str, start_fret: int = 3,
         max_stretch = cap
     if pitches is None:
         pitches = scale_pitches(root_name, scale_name)
+    string_configs = _normalize_string_configs(string_configs)
     root_pc = NOTE_NAMES.index(root_name)
     fret_floor = _effective_fret_min(string_configs)
     pattern = {}
@@ -950,6 +976,7 @@ def generate_3nps(root_name: str, scale_name: str, start_fret: int = 3,
     The highest spider-capo bar sets a global floor on body frets across all
     strings; the bar physically blocks fretting at or below that fret.
     """
+    string_configs = _normalize_string_configs(string_configs)
     cap = effective_finger_step(scale_name)
     if max_step is None:
         max_step = cap
@@ -1059,6 +1086,7 @@ def generate_arpeggio(root_name: str, scale_name: str, start_fret: int = 3,
     if max_stretch is None:
         max_stretch = effective_finger_step(scale_name)
     pitches = scale_pitches(root_name, scale_name)
+    string_configs = _normalize_string_configs(string_configs)
     root_pc = NOTE_NAMES.index(root_name)
     fret_floor = _effective_fret_min(string_configs)
     pattern = {}
@@ -1336,8 +1364,8 @@ def find_scalar_runs(root_name: str, scale_name: str, *,
     import itertools as _it
     pitches = scale_pitches(root_name, scale_name)
     strings = list(STRING_ORDER_LOW_TO_HIGH)
-    midi_low = min(OPEN_MIDI.values())
-    midi_high = max(OPEN_MIDI.values()) + fret_max
+    midi_low = min(OPEN_MIDI)
+    midi_high = max(OPEN_MIDI) + fret_max
     # Five-tone ascending targets for the upper five strings
     starts = [m for m in range(midi_low, midi_high + 1) if m % 12 in pitches]
     targets = []
@@ -1465,14 +1493,6 @@ def generate_scalar_run(root_name: str, scale_name: str, *,
     return cands[idx]['string_configs'], cands[idx]['pattern']
 
 
-def tuning_label() -> str:
-    """Return a short string identifying the active tuning using the
-    user-facing display letters (no position suffixes), e.g. 'EADGBe' for
-    guitar, 'BEADGC' for bass_6, 'EADGCF' for all-fourths, 'DADGBe' for
-    drop-D, 'EEEEee' for all-E."""
-    return ''.join(STRING_DISPLAY_LETTERS[k] for k in STRING_ORDER_LOW_TO_HIGH)
-
-
 def render(pattern: dict, label: str = "", width: int = 20,
            string_configs: dict = None, show_tuning: bool = True) -> str:
     """Render a {string: tuple_of_frets} pattern as a fretboard-faithful diagram.
@@ -1497,6 +1517,7 @@ def render(pattern: dict, label: str = "", width: int = 20,
     renders and emit one header for the whole chart.
     """
     shift = _max_capo(string_configs)
+    pattern = _normalize_string_configs(pattern)
 
     if pattern:
         max_fret = max((max(p) for p in pattern.values() if p), default=shift)
@@ -1504,31 +1525,28 @@ def render(pattern: dict, label: str = "", width: int = 20,
         if width < needed:
             width = needed
 
-    # Pad string-label prefix to the widest key in the active tuning so that
-    # mixed-width keys (e.g. drop-D's ['D1','A','D2','G','B','e']) still align
-    # body columns vertically across lines.
-    key_w = max(len(k) for k in STRING_ORDER_LOW_TO_HIGH)
+    cfg = _normalize_string_configs(string_configs)
     lines = []
-    for s in STRING_ORDER_DISPLAY:
-        prefix = s.rjust(key_w)
-        if string_configs and s in string_configs and string_configs[s] is None:
+    for pos in STRING_ORDER_DISPLAY:
+        letter = STRING_NOTES[pos]
+        if cfg and pos in cfg and cfg[pos] is None:
             chars = ['-'] * width
             chars[0] = ' '
-            lines.append(f"{prefix}X" + ''.join(chars) + "|")
+            lines.append(f"{letter}X" + ''.join(chars) + "|")
             continue
 
         config_char = '0'
-        if string_configs and s in string_configs:
-            val = string_configs[s]
+        if cfg and pos in cfg:
+            val = cfg[pos]
             config_char = val if val in ('X', '|') else str(val)
 
-        frets = pattern.get(s, ())
+        frets = pattern.get(pos, ()) if pattern else ()
         chars = ['-'] * width
         chars[0] = ' '
         for f in frets:
             col = f - shift
             chars[col] = str(f % 10)
-        lines.append(f"{prefix}{config_char}" + ''.join(chars) + "|")
+        lines.append(f"{letter}{config_char}" + ''.join(chars) + "|")
 
     if show_tuning:
         lines.insert(0, f"Tuning: {tuning_label()}")

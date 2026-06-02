@@ -42,11 +42,14 @@ Before writing any new naming/labeling/spelling code, check this list. All helpe
 below already exist in [src/fretboard.py](src/fretboard.py). Use them.
 
 ### Constants and tables
-- `OPEN_STRINGS` — dict mapping string letter to open pitch class (the *active*
-  tuning; guitar EADGBe by default).
-- `OPEN_MIDI` — dict mapping string letter to absolute open MIDI number (E2 = 40
-  for guitar). Used by the cluster finder, which needs absolute pitch to check
-  whether the strummed drones ascend across the strings.
+- `STRING_NOTES` — list of display letters per position (low to high). May
+  contain duplicates (drop-D's `['D', 'A', 'D', 'G', 'B', 'e']`, all-E's
+  `['E', 'E', 'E', 'E', 'e', 'e']`).
+- `OPEN_STRINGS` — list of open-string pitch classes, position-indexed
+  (parallel to `STRING_NOTES`). Access as `OPEN_STRINGS[pos]`.
+- `OPEN_MIDI` — list of absolute open MIDI numbers (E2 = 40 for guitar position
+  0). Position-indexed. Used by the cluster/scalar-run finders, which need
+  absolute pitch (not just pitch class).
 - `NOTE_NAMES` — 12 sharps-only note names.
 - `STRING_ORDER_LOW_TO_HIGH`, `STRING_ORDER_DISPLAY` — string letter orderings
   (also reflect the active tuning).
@@ -60,34 +63,41 @@ below already exist in [src/fretboard.py](src/fretboard.py). Use them.
 ### Instrument tunings
 - The module defaults to 6-string guitar (EADGBe). To generate/render for another
   instrument or alternate tuning, wrap the calls in `with use_tuning(name): …`.
-  This temporarily rebinds the tuning globals (`OPEN_STRINGS`, `OPEN_MIDI`, the
-  string orders, the line regex, `STRETCH_PROFILES`, `STRING_DISPLAY_LETTERS`)
-  and restores them on exit.
+  This temporarily rebinds the tuning globals (`STRING_NOTES`, `OPEN_STRINGS`,
+  `OPEN_MIDI`, the string orders, the line regex, `STRETCH_PROFILES`) and
+  restores them on exit.
 - Built-in presets:
   - `'guitar'` — EADGBe (default).
   - `'bass_6'` — BEADGC.
   - `'guitar_fourths'` — EADGCF (all-fourths).
   - `'guitar_fifths'` — CGDAEB (all-fifths).
-  - `'drop_d'` — DADGBe.
-  - `'dadgad'` — DADGAD.
-  - `'all_E'` — EEEEee (all six strings tuned to E, four octaves apart).
-- **Duplicate display letters** (drop-D's two D's, DADGAD's three D's + two A's,
-  all_E's four E's + two e's) are allowed. Internally `_unique_letters` appends
-  a 1-based position suffix to repeated letters, so drop-D's keys become
-  `['D1','A','D2','G','B','e']` and all_E's become `['E1','E2','E3','E4','e1','e2']`.
-  These suffixed keys are what `OPEN_STRINGS`, `OPEN_MIDI`, `string_configs` and
-  diagram line prefixes use. The user-facing display letters (without suffix)
-  are stored in `STRING_DISPLAY_LETTERS` and used by `tuning_label()` and
-  `drone_label()`.
-- Diagram-line prefixes use the suffixed key followed by the config char; lines
-  are padded to the widest key in the active tuning so the bar column aligns.
-  Example drop-D line: `D10 -------|` (key `D1`, config `0`, body); the regex
-  `DIAGRAM_LINE_RE` is rebuilt per tuning to match the suffixed keys.
-- Inside a tuning block, "root on the lowest string" targets that tuning's lowest
-  string. To pass a `string_configs` for an ambiguous tuning, use the suffixed
-  keys (e.g. `{'D1': 0, 'A': 2}` for drop-D, not `{'D': 0}`).
-- `tuning_label()` returns the user-friendly letters concatenated (`'EADGBe'`,
-  `'DADGBe'`, `'EEEEee'`).
+  - `'drop_d'` — DADGBe (two D's).
+  - `'dadgad'` — DADGAD (three D's, two A's).
+  - `'all_E'` — EEEEee (every string tuned to E, four octaves apart).
+- **Strings are identified by integer position** (`0` = lowest, `N-1` = highest),
+  not by letter. Display letters are stored in the parallel list `STRING_NOTES`
+  and may repeat freely (the duplicates show up in `tuning_label()` as
+  `'DADGBe'`, `'EEEEee'`, etc.). `OPEN_STRINGS` and `OPEN_MIDI` are
+  position-indexed lists, *not* dicts; access them as `OPEN_STRINGS[pos]`.
+- **String identifier resolution**: any helper that takes a `string` argument
+  (`pitch_at`, `note_name`, `drone_label`, `frets_in_scale`, `per_string_chord`)
+  accepts either an int position or a display letter via `_to_pos()`. A letter
+  is only resolvable if it appears exactly once in the active tuning. In
+  duplicate-letter tunings (drop-D's `'D'`, all-E's `'E'`/`'e'`), pass an int
+  position instead — the helper raises `ValueError` with a clear message.
+- **`string_configs` keys**: accept ints or unique letters. They get normalized
+  to int position keys at every public entry point via
+  `_normalize_string_configs()`. In a duplicate-letter tuning you must use ints
+  (`{0: 0, 2: 0}` for the two D's of drop-D, not `{'D': 0}`).
+- **Diagram line prefixes** are just the display letter from `STRING_NOTES[pos]`
+  (always single-char) followed by the config char and body. Lines look the
+  same regardless of tuning, e.g. `D0 -------|`. In a duplicate-letter tuning,
+  multiple lines may have identical prefixes — the line's display order in the
+  diagram (top to bottom = high to low) is what identifies its position.
+  `parse_diagram` returns `(position, fret, col)` tuples, using line order for
+  the position.
+- Inside a tuning block, "root on the lowest string" targets that tuning's
+  lowest string (position 0).
 - **Scalar-run mode and all-fifths**: the uniform P5 (7-semitone) string
   intervals can't be compressed into seconds within reasonable spans, so
   cross-string scalar runs there typically need `max_body_span >= 10`.
