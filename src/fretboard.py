@@ -681,20 +681,31 @@ STRETCH_PROFILES = _build_stretch_profiles(STRING_ORDER_LOW_TO_HIGH)
 
 
 # Instrument tunings: (low-to-high string order, {string letter: open pitch class}).
-# 'guitar' is the module default; 'bass_6' is a 6-string bass tuned BEADGC.
+# 'guitar' is the module default. Each preset's string-letter set must be
+# unique (the diagram line regex keys off the letter), and each preset has a
+# matching entry in _OPEN_MIDI_PRESETS below.
 _TUNING_PRESETS = {
     'guitar': (['E', 'A', 'D', 'G', 'B', 'e'],
                {'E': 4, 'A': 9, 'D': 2, 'G': 7, 'B': 11, 'e': 4}),
     'bass_6': (['B', 'E', 'A', 'D', 'G', 'C'],
                {'B': 11, 'E': 4, 'A': 9, 'D': 2, 'G': 7, 'C': 0}),
+    # All-fourths guitar (EADGCF): the natural M3 between G and B is
+    # straightened to a P4 by tuning B up to C, then high-e up to F.
+    'guitar_fourths': (['E', 'A', 'D', 'G', 'C', 'F'],
+                       {'E': 4, 'A': 9, 'D': 2, 'G': 7, 'C': 0, 'F': 5}),
+    # All-fifths (CGDAEB): every string is a perfect 5th above the previous.
+    'guitar_fifths': (['C', 'G', 'D', 'A', 'E', 'B'],
+                      {'C': 0, 'G': 7, 'D': 2, 'A': 9, 'E': 4, 'B': 11}),
 }
 
 # Open-string MIDI pitches per tuning (E2 = 40, middle-C = 60). Used by the
 # cluster finder, which needs absolute pitch (not just pitch class) to score
 # whether drones ascend monotonically when strummed.
 _OPEN_MIDI_PRESETS = {
-    'guitar': {'E': 40, 'A': 45, 'D': 50, 'G': 55, 'B': 59, 'e': 64},
-    'bass_6': {'B': 23, 'E': 28, 'A': 33, 'D': 38, 'G': 43, 'C': 48},
+    'guitar':         {'E': 40, 'A': 45, 'D': 50, 'G': 55, 'B': 59, 'e': 64},
+    'bass_6':         {'B': 23, 'E': 28, 'A': 33, 'D': 38, 'G': 43, 'C': 48},
+    'guitar_fourths': {'E': 40, 'A': 45, 'D': 50, 'G': 55, 'C': 60, 'F': 65},
+    'guitar_fifths':  {'C': 36, 'G': 43, 'D': 50, 'A': 57, 'E': 64, 'B': 71},
 }
 OPEN_MIDI = dict(_OPEN_MIDI_PRESETS['guitar'])
 
@@ -1398,8 +1409,15 @@ def generate_scalar_run(root_name: str, scale_name: str, *,
     return cands[idx]['string_configs'], cands[idx]['pattern']
 
 
+def tuning_label() -> str:
+    """Return a short string identifying the active tuning, e.g. 'EADGBe'
+    for guitar, 'BEADGC' for bass_6, 'EADGCF' for guitar_fourths. Built
+    from the live STRING_ORDER_LOW_TO_HIGH so it tracks `use_tuning`."""
+    return ''.join(STRING_ORDER_LOW_TO_HIGH)
+
+
 def render(pattern: dict, label: str = "", width: int = 20,
-           string_configs: dict = None) -> str:
+           string_configs: dict = None, show_tuning: bool = True) -> str:
     """Render a {string: tuple_of_frets} pattern as a fretboard-faithful diagram.
 
     Every fret is rendered as a single digit equal to fret % 10.
@@ -1416,6 +1434,10 @@ def render(pattern: dict, label: str = "", width: int = 20,
       0    -> '0' (nut position — same as default)
       N    -> str(N) (capo at fret N)
     Strings absent from string_configs use '0' (normal, nut position).
+
+    show_tuning prepends a `Tuning: <letters>` header line above the strings.
+    `render_full_set` and other composers pass show_tuning=False on inner
+    renders and emit one header for the whole chart.
     """
     shift = _max_capo(string_configs)
 
@@ -1438,7 +1460,7 @@ def render(pattern: dict, label: str = "", width: int = 20,
             val = string_configs[s]
             config_char = val if val in ('X', '|') else str(val)
 
-        frets = pattern[s]
+        frets = pattern.get(s, ())
         chars = ['-'] * width
         chars[0] = ' '
         for f in frets:
@@ -1446,6 +1468,8 @@ def render(pattern: dict, label: str = "", width: int = 20,
             chars[col] = str(f % 10)
         lines.append(f"{s}{config_char}" + ''.join(chars) + "|")
 
+    if show_tuning:
+        lines.insert(0, f"Tuning: {tuning_label()}")
     out = '\n'.join(lines)
     if label:
         out += f"  {label}"
@@ -1665,7 +1689,7 @@ def generate_full_set(root_name: str, scale_name: str,
                             require_root_on_low_e=True)
         if pat is None:
             raise RuntimeError(f"Could not generate 2NPS at fret {start}")
-        diagram = render(pat, label="", width=width, string_configs=cfg)
+        diagram = render(pat, label="", width=width, string_configs=cfg, show_tuning=False)
         if not verify(diagram, root_name, scale_name):
             raise RuntimeError(f"2NPS verification failed at fret {start}")
         return diagram
@@ -1676,7 +1700,7 @@ def generate_full_set(root_name: str, scale_name: str,
                             require_root_on_low_e=True)
         if pat is None:
             raise RuntimeError(f"Could not generate 3NPS at fret {start}")
-        diagram = render(pat, label="", width=width, string_configs=cfg)
+        diagram = render(pat, label="", width=width, string_configs=cfg, show_tuning=False)
         if not verify(diagram, root_name, scale_name):
             raise RuntimeError(f"3NPS verification failed at fret {start}")
         return diagram
@@ -1688,7 +1712,7 @@ def generate_full_set(root_name: str, scale_name: str,
                                 require_root_on_low_e=True)
         if pat is None:
             raise RuntimeError(f"Could not generate arpeggio at fret {start}")
-        diagram = render(pat, label="", width=width, string_configs=cfg)
+        diagram = render(pat, label="", width=width, string_configs=cfg, show_tuning=False)
         if not verify(diagram, root_name, scale_name):
             raise RuntimeError(f"Arpeggio verification failed at fret {start}")
         return diagram
@@ -1782,7 +1806,8 @@ def render_full_set(full_set: dict, gap: int = 4) -> str:
         if full_set.get(key):
             sections.append(render_row(full_set[key],
                                        with_chords=(key == 'arpeggio')))
-    return '\n\n'.join(sections)
+    body = '\n\n'.join(sections)
+    return f"Tuning: {tuning_label()}\n{body}" if body else body
 
 
 def side_by_side(left: str, left_label: str,

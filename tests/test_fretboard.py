@@ -14,7 +14,7 @@ from fretboard import (
     all_diagram_frets_in_range,
     find_cluster_drones, generate_cluster, generate_cluster_and_render,
     find_scalar_runs, generate_scalar_run, generate_scalar_run_and_render,
-    use_tuning,
+    use_tuning, tuning_label,
     MAX_FINGER_STEP, OPEN_STRINGS, OPEN_MIDI, SCALES, NOTE_NAMES,
 )
 
@@ -497,6 +497,65 @@ def test_scalar_run_bass_tuning():
         assert len(c['sequence_midi']) == 6
         upper = c['sequence_midi'][1:]
         assert all(upper[i + 1] > upper[i] for i in range(4))
+
+
+def test_tuning_label_tracks_active_tuning():
+    """tuning_label() reflects use_tuning()."""
+    assert tuning_label() == 'EADGBe'
+    with use_tuning('bass_6'):
+        assert tuning_label() == 'BEADGC'
+    with use_tuning('guitar_fourths'):
+        assert tuning_label() == 'EADGCF'
+    with use_tuning('guitar_fifths'):
+        assert tuning_label() == 'CGDAEB'
+    # outside the block, restored
+    assert tuning_label() == 'EADGBe'
+
+
+def test_render_prepends_tuning_header_by_default():
+    diagram = generate_and_render('C', 'major')
+    first_line = diagram.split('\n')[0]
+    assert first_line == 'Tuning: EADGBe', first_line
+
+
+def test_render_can_suppress_tuning_header():
+    d = render({}, label="x", show_tuning=False)
+    assert not d.startswith('Tuning:')
+
+
+def test_full_set_has_single_tuning_header():
+    fs = generate_full_set('A', 'natural_minor')
+    out = render_full_set(fs)
+    assert out.startswith('Tuning: EADGBe')
+    # Only one occurrence of the header
+    assert out.count('Tuning: EADGBe') == 1
+
+
+def test_guitar_fourths_tuning_basic():
+    """A 2NPS diagram on the all-fourths tuning still verifies in scale."""
+    with use_tuning('guitar_fourths'):
+        d = generate_and_render('A', 'natural_minor')
+        assert 'Tuning: EADGCF' in d
+        assert verify(d, 'A', 'natural_minor')
+
+
+def test_open_midi_consistent_across_all_presets():
+    """OPEN_MIDI matches OPEN_STRINGS pitch classes for every preset."""
+    for tuning in ['guitar', 'bass_6', 'guitar_fourths', 'guitar_fifths']:
+        with use_tuning(tuning):
+            for s, midi in OPEN_MIDI.items():
+                assert midi % 12 == OPEN_STRINGS[s], \
+                    f"{tuning} {s}: midi {midi} % 12 != pc {OPEN_STRINGS[s]}"
+
+
+def test_parse_diagram_ignores_tuning_header():
+    """parse_diagram skips the 'Tuning: ...' header line gracefully."""
+    d = generate_and_render('C', 'major')
+    notes = parse_diagram(d)
+    assert notes, "expected parsed notes despite header"
+    # No parsed note should come from the header line
+    for s, f, _col in notes:
+        assert s in OPEN_STRINGS
 
 
 if __name__ == '__main__':

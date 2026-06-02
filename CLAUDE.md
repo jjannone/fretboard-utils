@@ -59,13 +59,26 @@ below already exist in [src/fretboard.py](src/fretboard.py). Use them.
 
 ### Instrument tunings
 - The module defaults to 6-string guitar (EADGBe). To generate/render for another
-  instrument, wrap the calls in `with use_tuning(name): …`. This temporarily
-  rebinds the tuning globals (`OPEN_STRINGS`, the string orders, the line regex,
-  `STRETCH_PROFILES`) and restores them on exit.
-- Presets: `'guitar'` (EADGBe), `'bass_6'` (BEADGC, low B to high C).
+  instrument or alternate tuning, wrap the calls in `with use_tuning(name): …`.
+  This temporarily rebinds the tuning globals (`OPEN_STRINGS`, `OPEN_MIDI`, the
+  string orders, the line regex, `STRETCH_PROFILES`) and restores them on exit.
+- Presets:
+  - `'guitar'` — EADGBe (the default).
+  - `'bass_6'` — BEADGC (6-string bass, low B to high C).
+  - `'guitar_fourths'` — EADGCF (all-fourths: the natural M3 between G and B
+    is straightened to a P4 by tuning B up to C and high-e up to F).
+  - `'guitar_fifths'` — CGDAEB (every string is a P5 above the previous).
 - Inside a tuning block, "root on the lowest string" targets that tuning's lowest
-  string (B for `bass_6`, E for guitar). String letters may differ (bass adds a
-  low `B` and high `C`); all helpers key off the active `OPEN_STRINGS`.
+  string (B for `bass_6`, E for guitar/guitar_fourths, C for guitar_fifths).
+  String letters may differ across tunings; all helpers key off the active
+  `OPEN_STRINGS`. Adding a new tuning requires unique string letters across the
+  preset (the diagram line regex uses the letters as keys).
+- `tuning_label()` returns the short letters string (`'EADGBe'`, `'EADGCF'`, …)
+  used in the diagram header.
+- **Scalar-run mode and all-fifths**: the uniform P5 (7-semitone) string
+  intervals can't be compressed into seconds within reasonable spans, so
+  cross-string scalar runs there typically need `max_body_span >= 10`.
+  All-fourths (uniform P4) needs ~6–7 like bass.
 
 ### Pitch math
 - `scale_pitches(root, scale)` → set of pitch classes in the scale. Use to test scale membership.
@@ -164,11 +177,15 @@ caller-passed values above the cap are silently clamped.
   convert any `'X'` strings into a second spider capo at fret N.
 
 ### Rendering
-- `render(pattern, label, width, string_configs)` — base ASCII renderer for one pattern.
-  Honors capo-bar shift in the body columns.
+- `render(pattern, label, width, string_configs, show_tuning=True)` — base ASCII
+  renderer for one pattern. Honors capo-bar shift in the body columns. Prepends
+  a `Tuning: <letters>` header line by default; composers (`render_full_set`,
+  `generate_full_set`'s inner renders) pass `show_tuning=False` and emit one
+  header for the whole chart.
 - `render_full_set(full_set, gap)` — arranges a `generate_full_set()` result into a
-  3-row grid with centred labels per column.
+  3-row grid with centred labels per column, with one `Tuning:` header at the top.
 - `side_by_side(left, left_label, right, right_label, gap)` — two diagrams + labels.
+  (Each input diagram already carries its own `Tuning:` header from `render`.)
 
 ### Validation
 - `_validate_capo_count(string_configs, max_capos=2)` — raises `ValueError` if there are
