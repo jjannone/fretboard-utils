@@ -1327,6 +1327,7 @@ def generate_cluster(root_name: str, scale_name: str, *,
 def find_scalar_runs(root_name: str, scale_name: str, *,
                      max_capo: int = 5, max_distinct_capos: int = 2,
                      max_step: int = 2, allow_one_minor_third: bool = True,
+                     allow_one_wild_jump: bool = False,
                      max_body_span: int = 7, fret_max: int = 22):
     """Find ascending stepwise scalar runs across the upper five strings,
     with the lowest string acting as a bass pedal beneath the run.
@@ -1335,63 +1336,72 @@ def find_scalar_runs(root_name: str, scale_name: str, *,
     either its open/capo drone or a single fretted in-scale note above the
     capo bar. Adjacent upper-string pitches step by m2 or M2 (1 or 2
     semitones); `allow_one_minor_third` permits one m3 (3-semitone) hop for
-    scales whose neighbouring tones are a minor third apart (harmonic minor,
-    Hungarian, etc.).
+    scales whose neighbouring tones are a minor third apart (harmonic minor
+    etc.).
+
+    `allow_one_wild_jump` (default False) further relaxes the run to allow
+    **one** step of any positive scale interval (M3, P4, P5, …) in addition
+    to (or in place of) the m3 allowance. The wild jump subsumes the m3
+    budget: if a config can be reached with a smaller wild jump, it will be;
+    the ranking still prefers no/smaller wild jumps. This option often
+    unlocks very tight (or zero-span) body fingerings on scales whose pure-
+    stepwise geometry is wider — at the cost of a non-stepwise leap
+    somewhere in the run.
 
     The lowest string contributes any in-scale pitch ≤ the second string's
-    pitch — typically an octave below the run, so the bass anchors the
-    cluster while the upper notes ascend in seconds. The bass→string-2 gap
-    is therefore free (often wider than a third), but every step within the
-    upper five must still be a second.
+    pitch (typically an octave below the run).
 
-    The body notes (fretted positions across all strings) must fit a
-    holdable hand position: their fret range is constrained to
-    `max_body_span` semitones (default 6). With six-string runs the
-    geometric floor is ~6 frets; tighter spans typically yield no solutions
-    because the natural P4/M3 string intervals must be compressed into
-    seconds across five string boundaries.
+    `max_body_span` caps the fret range of all body notes so the fingering
+    fits a holdable shape.
 
     Returns a list of dicts, ranked best-first by:
-      1. No minor-3rd hop
-      2. Smaller body span (tighter hand position)
-      3. More drones used (fewer fingerings to fret)
+      1. Smaller body span (tighter hand position)
+      2. More drones used (fewer fingerings to fret)
+      3. Smaller wild-jump size (0 = no wild jump > m3 > M3 > P4 > …)
       4. Fewer distinct capo frets
       5. Lower top capo fret
     Each result has 'string_configs', 'pattern', 'sequence_midi' (six
-    pitches, low to high), 'capo_frets', 'has_minor_third', 'drones_used',
-    'body_span', and 'bass_gap' (semitones from bass to string-2's pitch).
+    pitches, low to high), 'capo_frets', 'has_minor_third', 'wild_jump_size'
+    (0 if none, else the step in semitones), 'drones_used', 'body_span',
+    and 'bass_gap' (semitones from bass to string-2's pitch).
     """
     import itertools as _it
     pitches = scale_pitches(root_name, scale_name)
     strings = list(STRING_ORDER_LOW_TO_HIGH)
     midi_low = min(OPEN_MIDI)
     midi_high = max(OPEN_MIDI) + fret_max
-    # Five-tone ascending targets for the upper five strings
+    # Five-tone ascending targets for the upper five strings. Walk by next
+    # in-scale tone; allow one step beyond `max_step` if budgets permit.
     starts = [m for m in range(midi_low, midi_high + 1) if m % 12 in pitches]
-    targets = []
-    for s in starts:
-        seq = [s]
-        cur = s
-        m3_used = False
-        ok = True
-        for _ in range(4):  # 4 more steps -> 5 notes total
+    targets = []  # list of (seq, has_m3, wild_jump_size)
+
+    def _walk(start):
+        # Iterative walk: at each step the next scale tone (if ≤ max_step)
+        # is taken; an exceeding step consumes the m3 or wild budget.
+        # With allow_one_wild_jump we DFS to explore multiple wild-jump
+        # placements per starting pitch.
+        def dfs(seq, m3_used, wild_size):
+            if len(seq) == 5:
+                targets.append((tuple(seq), m3_used, wild_size))
+                return
+            cur = seq[-1]
             n = cur + 1
-            while n <= midi_high and n % 12 not in pitches:
+            while n <= midi_high:
+                if n % 12 in pitches:
+                    step = n - cur
+                    if step <= max_step:
+                        dfs(seq + [n], m3_used, wild_size)
+                    elif step == 3 and allow_one_minor_third and not m3_used and wild_size == 0:
+                        dfs(seq + [n], True, 0)
+                    elif allow_one_wild_jump and wild_size == 0 and not m3_used:
+                        # One wild jump (any size > max_step). When wild jump is
+                        # spent the rest of the run must be stepwise.
+                        dfs(seq + [n], False, step)
                 n += 1
-            if n > midi_high:
-                ok = False
-                break
-            step = n - cur
-            if step > max_step:
-                if step == 3 and allow_one_minor_third and not m3_used:
-                    m3_used = True
-                else:
-                    ok = False
-                    break
-            seq.append(n)
-            cur = n
-        if ok:
-            targets.append((tuple(seq), m3_used))
+        dfs([start], False, 0)
+
+    for s in starts:
+        _walk(s)
     results = []
     seen = set()
     for fret_tuple in _it.product(range(max_capo + 1), repeat=6):
@@ -1411,8 +1421,7 @@ def find_scalar_runs(root_name: str, scale_name: str, *,
                     m = OPEN_MIDI[s] + f
                     opts.setdefault(m, (f, False))
             playable.append(opts)
-        for tgt, has_m3 in targets:
-            # Assign tgt[0..4] to strings 2..6 (indices 1..5)
+        for tgt, has_m3, wild_size in targets:
             choice_upper = []
             ok = True
             for i in range(5):
@@ -1423,7 +1432,6 @@ def find_scalar_runs(root_name: str, scale_name: str, *,
                     break
             if not ok:
                 continue
-            # Low string acts as bass pedal: any in-scale pitch <= tgt[0]
             for low_midi, (low_fret, low_is_drone) in playable[0].items():
                 if low_midi > tgt[0]:
                     continue
@@ -1455,6 +1463,7 @@ def find_scalar_runs(root_name: str, scale_name: str, *,
                     'sequence_midi': full_seq,
                     'capo_frets': sorted(distinct),
                     'has_minor_third': has_m3,
+                    'wild_jump_size': wild_size,
                     'drones_used': drones_used,
                     'body_span': span,
                     'bass_gap': tgt[0] - low_midi,
@@ -1462,8 +1471,9 @@ def find_scalar_runs(root_name: str, scale_name: str, *,
                 })
     results.sort(key=lambda r: (
         r['body_span'],
-        r['has_minor_third'],
         -r['drones_used'],
+        r['wild_jump_size'],
+        r['has_minor_third'],
         len(r['capo_frets']),
         max(r['capo_frets']) if r['capo_frets'] else 0,
         r['top_body'],
@@ -1474,6 +1484,7 @@ def find_scalar_runs(root_name: str, scale_name: str, *,
 def generate_scalar_run(root_name: str, scale_name: str, *,
                         max_capo: int = 5, max_distinct_capos: int = 2,
                         max_step: int = 2, allow_one_minor_third: bool = True,
+                        allow_one_wild_jump: bool = False,
                         max_body_span: int = 7,
                         fret_max: int = 22, choose: int = 0):
     """Pick a scalar-run capo + fingering combination. Returns
@@ -1483,6 +1494,7 @@ def generate_scalar_run(root_name: str, scale_name: str, *,
                              max_distinct_capos=max_distinct_capos,
                              max_step=max_step,
                              allow_one_minor_third=allow_one_minor_third,
+                             allow_one_wild_jump=allow_one_wild_jump,
                              max_body_span=max_body_span,
                              fret_max=fret_max)
     if not cands:
@@ -1658,19 +1670,21 @@ def generate_scalar_run_and_render(root_name: str, scale_name: str, *,
                                    max_capo: int = 5, max_distinct_capos: int = 2,
                                    max_step: int = 2,
                                    allow_one_minor_third: bool = True,
+                                   allow_one_wild_jump: bool = False,
                                    max_body_span: int = 7,
                                    fret_max: int = 22,
                                    choose: int = 0,
                                    width: int = 20) -> str:
     """One-shot: choose a scalar-run capo + fingering combo and render the
-    diagram, verified. Strumming the upper five strings produces an
-    ascending stepwise scale fragment; the lowest string sounds beneath
-    as a bass pedal (any in-scale pitch). Body fingerings fit a holdable
-    chord shape (max_body_span frets across all fretted positions)."""
+    diagram, verified. The upper five strings ascend stepwise (m2/M2, with
+    optionally one m3 or one wild jump of any size — see
+    `allow_one_wild_jump`); the lowest string sounds beneath as a bass
+    pedal. Body fingerings fit a holdable shape (max_body_span frets)."""
     string_configs, pattern = generate_scalar_run(
         root_name, scale_name,
         max_capo=max_capo, max_distinct_capos=max_distinct_capos,
         max_step=max_step, allow_one_minor_third=allow_one_minor_third,
+        allow_one_wild_jump=allow_one_wild_jump,
         max_body_span=max_body_span,
         fret_max=fret_max, choose=choose,
     )
