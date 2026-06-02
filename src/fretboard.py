@@ -624,10 +624,12 @@ def decorate(diagram: str, root_name: str, scale_name: str,
     for line in diagram.split('\n'):
         if not line:
             continue
-        if line[0] in OPEN_STRINGS:
-            s = line[0]
-            config = line[1]
-            rest = line[2:]  # body + closing | (and any embedded label)
+        m = DIAGRAM_LINE_RE.match(line)
+        if m:
+            s = m.group(1)        # string key (1 or 2 chars)
+            config = m.group(2)
+            body_offset = m.start(3)
+            rest = line[body_offset:]  # body + closing |
             new_line = f"{drone_labels[s]:<{label_width}}{config}{rest}"
             if with_chords:
                 new_line += f"  {chord_labels[s]:<{chord_width}}"
@@ -680,67 +682,121 @@ def _build_stretch_profiles(order):
 STRETCH_PROFILES = _build_stretch_profiles(STRING_ORDER_LOW_TO_HIGH)
 
 
-# Instrument tunings: (low-to-high string order, {string letter: open pitch class}).
-# 'guitar' is the module default. Each preset's string-letter set must be
-# unique (the diagram line regex keys off the letter), and each preset has a
-# matching entry in _OPEN_MIDI_PRESETS below.
+# Instrument tunings. Each preset's 'letters' list is the display sequence
+# (low to high). Duplicates are allowed — _unique_letters() auto-disambiguates
+# repeated letters into internal keys by appending a position suffix
+# (['D','A','D','G','B','e'] becomes ['D1','A','D2','G','B','e']). 'pcs' and
+# 'midi' are position-indexed parallel lists.
 _TUNING_PRESETS = {
-    'guitar': (['E', 'A', 'D', 'G', 'B', 'e'],
-               {'E': 4, 'A': 9, 'D': 2, 'G': 7, 'B': 11, 'e': 4}),
-    'bass_6': (['B', 'E', 'A', 'D', 'G', 'C'],
-               {'B': 11, 'E': 4, 'A': 9, 'D': 2, 'G': 7, 'C': 0}),
+    'guitar': {
+        'letters': ['E', 'A', 'D', 'G', 'B', 'e'],
+        'pcs':     [4, 9, 2, 7, 11, 4],
+        'midi':    [40, 45, 50, 55, 59, 64],
+    },
+    'bass_6': {
+        'letters': ['B', 'E', 'A', 'D', 'G', 'C'],
+        'pcs':     [11, 4, 9, 2, 7, 0],
+        'midi':    [23, 28, 33, 38, 43, 48],
+    },
     # All-fourths guitar (EADGCF): the natural M3 between G and B is
-    # straightened to a P4 by tuning B up to C, then high-e up to F.
-    'guitar_fourths': (['E', 'A', 'D', 'G', 'C', 'F'],
-                       {'E': 4, 'A': 9, 'D': 2, 'G': 7, 'C': 0, 'F': 5}),
-    # All-fifths (CGDAEB): every string is a perfect 5th above the previous.
-    'guitar_fifths': (['C', 'G', 'D', 'A', 'E', 'B'],
-                      {'C': 0, 'G': 7, 'D': 2, 'A': 9, 'E': 4, 'B': 11}),
+    # straightened to a P4 by tuning B up to C and high-e up to F.
+    'guitar_fourths': {
+        'letters': ['E', 'A', 'D', 'G', 'C', 'F'],
+        'pcs':     [4, 9, 2, 7, 0, 5],
+        'midi':    [40, 45, 50, 55, 60, 65],
+    },
+    # All-fifths (CGDAEB): every string a P5 above the previous.
+    'guitar_fifths': {
+        'letters': ['C', 'G', 'D', 'A', 'E', 'B'],
+        'pcs':     [0, 7, 2, 9, 4, 11],
+        'midi':    [36, 43, 50, 57, 64, 71],
+    },
+    # Drop D (DADGBe) — two D's: D1 (low) and D2 (third string).
+    'drop_d': {
+        'letters': ['D', 'A', 'D', 'G', 'B', 'e'],
+        'pcs':     [2, 9, 2, 7, 11, 4],
+        'midi':    [38, 45, 50, 55, 59, 64],
+    },
+    # DADGAD — three D's, two A's. Becomes ['D1','A1','D2','G','A2','D3'].
+    'dadgad': {
+        'letters': ['D', 'A', 'D', 'G', 'A', 'D'],
+        'pcs':     [2, 9, 2, 7, 9, 2],
+        'midi':    [38, 45, 50, 55, 57, 62],
+    },
+    # All-E party trick: four bottom E's spread across octaves, two top e's.
+    'all_E': {
+        'letters': ['E', 'E', 'E', 'E', 'e', 'e'],
+        'pcs':     [4, 4, 4, 4, 4, 4],
+        'midi':    [16, 28, 40, 52, 64, 76],
+    },
 }
 
-# Open-string MIDI pitches per tuning (E2 = 40, middle-C = 60). Used by the
-# cluster finder, which needs absolute pitch (not just pitch class) to score
-# whether drones ascend monotonically when strummed.
-_OPEN_MIDI_PRESETS = {
-    'guitar':         {'E': 40, 'A': 45, 'D': 50, 'G': 55, 'B': 59, 'e': 64},
-    'bass_6':         {'B': 23, 'E': 28, 'A': 33, 'D': 38, 'G': 43, 'C': 48},
-    'guitar_fourths': {'E': 40, 'A': 45, 'D': 50, 'G': 55, 'C': 60, 'F': 65},
-    'guitar_fifths':  {'C': 36, 'G': 43, 'D': 50, 'A': 57, 'E': 64, 'B': 71},
-}
-OPEN_MIDI = dict(_OPEN_MIDI_PRESETS['guitar'])
+
+def _unique_letters(letters):
+    """Append a position suffix (1-based among duplicates) to repeated letters.
+    Single-occurrence letters pass through unchanged.
+    Example: ['D','A','D','G','B','e'] -> ['D1','A','D2','G','B','e']."""
+    from collections import Counter
+    counts = Counter(letters)
+    seen = {}
+    out = []
+    for ltr in letters:
+        if counts[ltr] > 1:
+            seen[ltr] = seen.get(ltr, 0) + 1
+            out.append(f"{ltr}{seen[ltr]}")
+        else:
+            out.append(ltr)
+    return out
+
+
+# Display letters per internal key for the active tuning. e.g. 'D1' -> 'D'.
+STRING_DISPLAY_LETTERS = {k: k for k in ['E', 'A', 'D', 'G', 'B', 'e']}
+OPEN_MIDI = dict(zip(['E', 'A', 'D', 'G', 'B', 'e'], [40, 45, 50, 55, 59, 64]))
 
 
 @contextmanager
 def use_tuning(name: str):
     """Temporarily switch the active instrument tuning for generation/rendering.
 
-    Rebinds the module-level tuning globals (OPEN_STRINGS, the two string
-    orders, the diagram line regex, and STRETCH_PROFILES) for the duration of
-    the with-block, then restores them. The module default is 6-string guitar,
-    so existing callers are unaffected.
+    Rebinds the module-level tuning globals (OPEN_STRINGS, OPEN_MIDI, the two
+    string orders, STRING_DISPLAY_LETTERS, the diagram line regex, and
+    STRETCH_PROFILES) for the duration of the with-block, then restores them.
+    The module default is 6-string guitar, so existing callers are unaffected.
 
-    Presets: 'guitar' (EADGBe) and 'bass_6' (BEADGC, low B to high C). Inside
-    the block, the "root on the lowest string" constraint targets that tuning's
-    lowest string (B for bass, E for guitar).
+    Presets with unique letters (`'guitar'`, `'bass_6'`, `'guitar_fourths'`,
+    `'guitar_fifths'`) use single-character keys throughout. Presets with
+    duplicate display letters (`'drop_d'`, `'dadgad'`, `'all_E'`) auto-suffix
+    the internal keys with a position digit: drop-D's two D's become 'D1'
+    (low) and 'D2' (third string), DADGAD's three D's become 'D1', 'D2', 'D3',
+    and so on. STRING_DISPLAY_LETTERS maps the internal key back to the
+    user-facing letter for display purposes; tuning_label() concatenates the
+    display letters.
     """
     global OPEN_STRINGS, STRING_ORDER_LOW_TO_HIGH, STRING_ORDER_DISPLAY
-    global DIAGRAM_LINE_RE, STRETCH_PROFILES, OPEN_MIDI
+    global DIAGRAM_LINE_RE, STRETCH_PROFILES, OPEN_MIDI, STRING_DISPLAY_LETTERS
     if name not in _TUNING_PRESETS:
         raise ValueError(f"Unknown tuning {name!r}; known: {list(_TUNING_PRESETS)}")
     saved = (OPEN_STRINGS, STRING_ORDER_LOW_TO_HIGH, STRING_ORDER_DISPLAY,
-             DIAGRAM_LINE_RE, STRETCH_PROFILES, OPEN_MIDI)
-    order, opens = _TUNING_PRESETS[name]
-    OPEN_STRINGS = dict(opens)
-    STRING_ORDER_LOW_TO_HIGH = list(order)
-    STRING_ORDER_DISPLAY = list(reversed(order))
-    DIAGRAM_LINE_RE = re.compile(rf"^([{''.join(order)}])([|0-9Xx]?)(.*?)\|?$")
-    STRETCH_PROFILES = _build_stretch_profiles(order)
-    OPEN_MIDI = dict(_OPEN_MIDI_PRESETS[name])
+             DIAGRAM_LINE_RE, STRETCH_PROFILES, OPEN_MIDI,
+             STRING_DISPLAY_LETTERS)
+    preset = _TUNING_PRESETS[name]
+    raw_letters = preset['letters']
+    keys = _unique_letters(raw_letters)
+    OPEN_STRINGS = dict(zip(keys, preset['pcs']))
+    OPEN_MIDI = dict(zip(keys, preset['midi']))
+    STRING_DISPLAY_LETTERS = dict(zip(keys, raw_letters))
+    STRING_ORDER_LOW_TO_HIGH = list(keys)
+    STRING_ORDER_DISPLAY = list(reversed(keys))
+    DIAGRAM_LINE_RE = re.compile(
+        rf"^\s*({'|'.join(re.escape(k) for k in keys)})([|0-9Xx]?)(.*?)\|?$"
+    )
+    STRETCH_PROFILES = _build_stretch_profiles(keys)
     try:
         yield
     finally:
         (OPEN_STRINGS, STRING_ORDER_LOW_TO_HIGH, STRING_ORDER_DISPLAY,
-         DIAGRAM_LINE_RE, STRETCH_PROFILES, OPEN_MIDI) = saved
+         DIAGRAM_LINE_RE, STRETCH_PROFILES, OPEN_MIDI,
+         STRING_DISPLAY_LETTERS) = saved
 
 
 def generate_2nps(root_name: str, scale_name: str, start_fret: int = 3,
@@ -1410,10 +1466,11 @@ def generate_scalar_run(root_name: str, scale_name: str, *,
 
 
 def tuning_label() -> str:
-    """Return a short string identifying the active tuning, e.g. 'EADGBe'
-    for guitar, 'BEADGC' for bass_6, 'EADGCF' for guitar_fourths. Built
-    from the live STRING_ORDER_LOW_TO_HIGH so it tracks `use_tuning`."""
-    return ''.join(STRING_ORDER_LOW_TO_HIGH)
+    """Return a short string identifying the active tuning using the
+    user-facing display letters (no position suffixes), e.g. 'EADGBe' for
+    guitar, 'BEADGC' for bass_6, 'EADGCF' for all-fourths, 'DADGBe' for
+    drop-D, 'EEEEee' for all-E."""
+    return ''.join(STRING_DISPLAY_LETTERS[k] for k in STRING_ORDER_LOW_TO_HIGH)
 
 
 def render(pattern: dict, label: str = "", width: int = 20,
@@ -1447,12 +1504,17 @@ def render(pattern: dict, label: str = "", width: int = 20,
         if width < needed:
             width = needed
 
+    # Pad string-label prefix to the widest key in the active tuning so that
+    # mixed-width keys (e.g. drop-D's ['D1','A','D2','G','B','e']) still align
+    # body columns vertically across lines.
+    key_w = max(len(k) for k in STRING_ORDER_LOW_TO_HIGH)
     lines = []
     for s in STRING_ORDER_DISPLAY:
+        prefix = s.rjust(key_w)
         if string_configs and s in string_configs and string_configs[s] is None:
             chars = ['-'] * width
             chars[0] = ' '
-            lines.append(f"{s}X" + ''.join(chars) + "|")
+            lines.append(f"{prefix}X" + ''.join(chars) + "|")
             continue
 
         config_char = '0'
@@ -1466,7 +1528,7 @@ def render(pattern: dict, label: str = "", width: int = 20,
         for f in frets:
             col = f - shift
             chars[col] = str(f % 10)
-        lines.append(f"{s}{config_char}" + ''.join(chars) + "|")
+        lines.append(f"{prefix}{config_char}" + ''.join(chars) + "|")
 
     if show_tuning:
         lines.insert(0, f"Tuning: {tuning_label()}")

@@ -558,6 +558,46 @@ def test_parse_diagram_ignores_tuning_header():
         assert s in OPEN_STRINGS
 
 
+def test_duplicate_letter_tunings_get_position_suffixed_keys():
+    """drop_d / dadgad / all_E auto-suffix duplicate letters into unique keys."""
+    import fretboard as fb
+    with use_tuning('drop_d'):
+        assert fb.STRING_ORDER_LOW_TO_HIGH == ['D1', 'A', 'D2', 'G', 'B', 'e']
+        assert set(fb.OPEN_STRINGS) == {'D1', 'A', 'D2', 'G', 'B', 'e'}
+    with use_tuning('dadgad'):
+        assert fb.STRING_ORDER_LOW_TO_HIGH == ['D1', 'A1', 'D2', 'G', 'A2', 'D3']
+    with use_tuning('all_E'):
+        assert fb.STRING_ORDER_LOW_TO_HIGH == ['E1', 'E2', 'E3', 'E4', 'e1', 'e2']
+
+
+def test_tuning_label_uses_display_letters():
+    """tuning_label() shows the user-facing letters (no position suffixes)."""
+    with use_tuning('drop_d'):
+        assert tuning_label() == 'DADGBe'
+    with use_tuning('dadgad'):
+        assert tuning_label() == 'DADGAD'
+    with use_tuning('all_E'):
+        assert tuning_label() == 'EEEEee'
+
+
+def test_duplicate_letter_tuning_diagram_round_trips():
+    """A diagram rendered under a duplicate-letter tuning still parses,
+    verifies, and decorates correctly."""
+    import fretboard as fb
+    with use_tuning('drop_d'):
+        d = generate_and_render('D', 'natural_minor')
+        # Header reflects display letters
+        assert 'Tuning: DADGBe' in d
+        # parse_diagram recovers the suffixed keys
+        keys = {s for s, _f, _c in parse_diagram(d)}
+        assert keys <= set(fb.OPEN_STRINGS), keys
+        # verify works
+        assert verify(d, 'D', 'natural_minor')
+        # decorate doesn't crash and adds drone labels
+        dec = fb.decorate(d, 'D', 'natural_minor')
+        assert dec.count('D(1)') >= 2  # both D strings labelled as degree 1
+
+
 if __name__ == '__main__':
     # Simple test runner
     tests = [v for k, v in list(globals().items()) if k.startswith('test_')]

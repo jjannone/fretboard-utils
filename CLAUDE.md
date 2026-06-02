@@ -61,20 +61,33 @@ below already exist in [src/fretboard.py](src/fretboard.py). Use them.
 - The module defaults to 6-string guitar (EADGBe). To generate/render for another
   instrument or alternate tuning, wrap the calls in `with use_tuning(name): …`.
   This temporarily rebinds the tuning globals (`OPEN_STRINGS`, `OPEN_MIDI`, the
-  string orders, the line regex, `STRETCH_PROFILES`) and restores them on exit.
-- Presets:
-  - `'guitar'` — EADGBe (the default).
-  - `'bass_6'` — BEADGC (6-string bass, low B to high C).
-  - `'guitar_fourths'` — EADGCF (all-fourths: the natural M3 between G and B
-    is straightened to a P4 by tuning B up to C and high-e up to F).
-  - `'guitar_fifths'` — CGDAEB (every string is a P5 above the previous).
+  string orders, the line regex, `STRETCH_PROFILES`, `STRING_DISPLAY_LETTERS`)
+  and restores them on exit.
+- Built-in presets:
+  - `'guitar'` — EADGBe (default).
+  - `'bass_6'` — BEADGC.
+  - `'guitar_fourths'` — EADGCF (all-fourths).
+  - `'guitar_fifths'` — CGDAEB (all-fifths).
+  - `'drop_d'` — DADGBe.
+  - `'dadgad'` — DADGAD.
+  - `'all_E'` — EEEEee (all six strings tuned to E, four octaves apart).
+- **Duplicate display letters** (drop-D's two D's, DADGAD's three D's + two A's,
+  all_E's four E's + two e's) are allowed. Internally `_unique_letters` appends
+  a 1-based position suffix to repeated letters, so drop-D's keys become
+  `['D1','A','D2','G','B','e']` and all_E's become `['E1','E2','E3','E4','e1','e2']`.
+  These suffixed keys are what `OPEN_STRINGS`, `OPEN_MIDI`, `string_configs` and
+  diagram line prefixes use. The user-facing display letters (without suffix)
+  are stored in `STRING_DISPLAY_LETTERS` and used by `tuning_label()` and
+  `drone_label()`.
+- Diagram-line prefixes use the suffixed key followed by the config char; lines
+  are padded to the widest key in the active tuning so the bar column aligns.
+  Example drop-D line: `D10 -------|` (key `D1`, config `0`, body); the regex
+  `DIAGRAM_LINE_RE` is rebuilt per tuning to match the suffixed keys.
 - Inside a tuning block, "root on the lowest string" targets that tuning's lowest
-  string (B for `bass_6`, E for guitar/guitar_fourths, C for guitar_fifths).
-  String letters may differ across tunings; all helpers key off the active
-  `OPEN_STRINGS`. Adding a new tuning requires unique string letters across the
-  preset (the diagram line regex uses the letters as keys).
-- `tuning_label()` returns the short letters string (`'EADGBe'`, `'EADGCF'`, …)
-  used in the diagram header.
+  string. To pass a `string_configs` for an ambiguous tuning, use the suffixed
+  keys (e.g. `{'D1': 0, 'A': 2}` for drop-D, not `{'D': 0}`).
+- `tuning_label()` returns the user-friendly letters concatenated (`'EADGBe'`,
+  `'DADGBe'`, `'EEEEee'`).
 - **Scalar-run mode and all-fifths**: the uniform P5 (7-semitone) string
   intervals can't be compressed into seconds within reasonable spans, so
   cross-string scalar runs there typically need `max_body_span >= 10`.
