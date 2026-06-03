@@ -100,10 +100,104 @@ SCALES = {
     'double_harmonic':    [0, 1, 4, 5, 7, 8, 11],   # Byzantine / Hijaz
     'persian':            [0, 1, 4, 5, 6, 8, 11],
     'enigmatic':          [0, 1, 4, 6, 8, 10, 11],
-    # Pentatonic
-    'major_pentatonic':   [0, 2, 4, 7, 9],
-    'minor_pentatonic':   [0, 3, 5, 7, 10],
-    'blues_minor':        [0, 3, 5, 6, 7, 10],
+    # Extra exotic 7-note
+    'hungarian_major':    [0, 3, 4, 6, 7, 9, 10],   # also "Romanian major"
+    'romanian_minor':     [0, 2, 3, 6, 7, 9, 10],   # = Ukrainian Dorian / Misheberach / Nikriz
+    'gypsy':              [0, 2, 3, 6, 7, 8, 10],   # Hungarian gypsy = harmonic minor with #4
+    'spanish_phrygian':   [0, 1, 3, 4, 5, 7, 8, 10],  # 8-note: Spanish gypsy w/ both b3 and natural 3
+    'arabic':             [0, 1, 4, 5, 6, 8, 10],   # variant Middle-Eastern
+    'algerian':           [0, 2, 3, 5, 6, 7, 8, 11],  # 8-note Algerian
+    'jewish':             [0, 1, 4, 5, 7, 8, 10],   # Klezmer freygish = phrygian dominant
+    # Arabic maqamat (some duplicate names of Western modes — kept for clarity)
+    'maqam_hijaz':        [0, 1, 4, 5, 7, 8, 10],   # = phrygian dominant
+    'maqam_hijaz_kar':    [0, 1, 4, 5, 7, 8, 11],   # = double harmonic
+    'maqam_bayati':       [0, 2, 3, 5, 7, 8, 10],   # Bayati flavor of phrygian
+    'maqam_rast':         [0, 2, 4, 5, 7, 9, 11],   # the "natural" maqam
+    'maqam_kurd':         [0, 1, 3, 5, 7, 8, 10],   # = phrygian
+    'maqam_nahawand':     [0, 2, 3, 5, 7, 8, 10],   # = natural minor
+    'maqam_saba':         [0, 2, 3, 5, 6, 8, 10],   # 4-tone tetrachord variant
+    'maqam_nikriz':       [0, 2, 3, 6, 7, 9, 10],   # = ukrainian dorian
+    # Hindustani ragas (a sampler; many are renamings of Western modes)
+    'raga_bhairav':       [0, 1, 4, 5, 7, 8, 11],   # = double harmonic
+    'raga_yaman':         [0, 2, 4, 6, 7, 9, 11],   # = lydian
+    'raga_bhairavi':      [0, 1, 3, 5, 7, 8, 10],   # = phrygian
+    'raga_asavari':       [0, 2, 3, 5, 7, 8, 10],   # = natural minor
+    'raga_todi':          [0, 1, 3, 6, 7, 8, 11],   # exotic 7-note (Hindustani Todi)
+    'raga_marwa':         [0, 1, 4, 6, 9, 11],      # 6-note hexatonic, no 5
+    'raga_purvi':         [0, 1, 4, 6, 7, 8, 11],
+    'raga_malkauns':      [0, 3, 5, 8, 10],         # pentatonic (= Man Gong)
+    'raga_megh':          [0, 2, 5, 7, 10],         # pentatonic (= Egyptian/Suspended)
+    'raga_darbari':       [0, 2, 3, 5, 7, 8, 10],   # = natural minor (in raga context)
+    'raga_bageshri':      [0, 2, 3, 5, 7, 9, 10],   # = dorian
+    'raga_hindol':        [0, 4, 6, 7, 11],         # 5-note: 1 3 #4 5 7
+    'raga_madhuvanti':    [0, 3, 4, 6, 7, 9, 11],
+
+    # --- Pentatonic (5 notes) ---
+    'major_pentatonic':   [0, 2, 4, 7, 9],          # = chinese Gong, raga Bhupali
+    'minor_pentatonic':   [0, 3, 5, 7, 10],         # = chinese Yu
+    'suspended_pentatonic': [0, 2, 5, 7, 10],       # Egyptian, also Chinese Shang
+    'man_gong':           [0, 3, 5, 8, 10],         # Chinese Jue/Chiao, = Malkauns / blues_major_pent
+    'ritsusen':           [0, 2, 5, 7, 9],          # Japanese yo / Chinese Zhi
+    'blues_major_pentatonic': [0, 2, 3, 7, 9],      # alt label
+    'hirajoshi':          [0, 2, 3, 7, 8],          # Japanese
+    'in_sen':             [0, 1, 5, 7, 10],         # Japanese (also sakura ascending)
+    'iwato':              [0, 1, 5, 6, 10],         # Japanese
+    'kumoi':              [0, 2, 3, 7, 9],          # Japanese (also called hon_kumoi_joshi)
+    'akebono':            [0, 2, 3, 7, 8],          # Japanese
+    'pelog':              [0, 1, 3, 7, 8],          # Indonesian 5-note pelog reduction
+    'slendro':            [0, 2, 5, 7, 9],          # Indonesian (≈ ritsusen)
+    'balinese':           [0, 1, 3, 7, 8],          # 5-note (similar to pelog)
+    'kokin_joshi':        [0, 1, 5, 7, 8],          # Japanese
+
+    # --- Ethiopian qenets (5 main qenets and their major/minor variants) ---
+    # Sources: Kebede (1971), Kimberlin, Powne, Shelemay. Spellings/intervals
+    # vary slightly between scholars; the most commonly cited interval sets
+    # are used here. All four qenets are pentatonic in their traditional form.
+    'ethiopian_tezeta_major': [0, 2, 4, 7, 9],      # = major pentatonic (Bhupali)
+    'ethiopian_tezeta_minor': [0, 2, 3, 7, 9],      # minor pent with M6
+    'ethiopian_bati_major':   [0, 4, 5, 7, 11],     # bright, lydian-fragmented
+    'ethiopian_bati_minor':   [0, 2, 5, 7, 9],      # = suspended pent / Shang
+    'ethiopian_ambassel':     [0, 1, 4, 5, 7],      # phrygian-leaning b2
+    'ethiopian_anchihoye':    [0, 4, 5, 6, 11],     # the "lament" qenet, tritone-rich
+    # Ethiopian regional / liturgical variants
+    'ethiopian_yematebela_wofe': [0, 2, 3, 7, 8],   # variant of tezeta minor
+    'ethiopian_geez':         [0, 4, 5, 7, 11],     # liturgical (Geez Orthodox), ≈ bati_major
+    'ethiopian_ezel':         [0, 1, 3, 5, 7, 8],   # liturgical
+    'ethiopian_araray':       [0, 2, 4, 5, 7, 9, 11],  # liturgical (≈ ionian)
+    'ethiopian_qinit_minor':  [0, 1, 3, 7, 8],      # generic "qenet" minor mode
+
+    # --- Hexatonic (6 notes) ---
+    # whole_tone, augmented and blues_minor are above with the symmetricals
+    'blues_major':        [0, 2, 3, 4, 7, 9],       # major blues hexatonic
+    'prometheus':         [0, 2, 4, 6, 9, 10],      # Scriabin's mystic (with #4)
+    'tritone_hex':        [0, 1, 4, 6, 7, 10],      # Petrushka / Stravinsky
+    'two_semitone_tritone': [0, 1, 2, 6, 7, 8],     # 2-2-2 tritone-pair
+    'istrian':            [0, 1, 3, 4, 6, 7],       # Croatian folk
+    'augmented_hex':      [0, 3, 4, 7, 8, 11],      # = augmented, listed for symmetry naming
+    'phrygian_hex':       [0, 1, 3, 5, 7, 10],      # phrygian minus the b6
+    'mixolydian_hex':     [0, 2, 4, 5, 7, 10],      # mixolydian minus the 6
+    'lydian_hex':         [0, 2, 4, 6, 7, 11],      # lydian minus the 6
+
+    # --- Octatonic (8 notes) ---
+    # half_whole_dim and whole_half_dim above. Bebop scales add a chromatic
+    # passing tone to a 7-note parent for an 8-note scale.
+    'bebop_dominant':     [0, 2, 4, 5, 7, 9, 10, 11],   # mixolydian + nat7
+    'bebop_major':        [0, 2, 4, 5, 7, 8, 9, 11],    # ionian + b6
+    'bebop_dorian':       [0, 2, 3, 4, 5, 7, 9, 10],    # dorian + nat3
+    'bebop_melodic_minor':[0, 2, 3, 5, 7, 8, 9, 11],    # mel min + b6 (also "bebop harmonic minor")
+    'spanish_8note':      [0, 1, 3, 4, 5, 6, 8, 10],    # phrygian dom + nat3
+    # --- Other unusual / 9-note / chromatic blends ---
+    'major_blues_9':      [0, 2, 3, 4, 5, 7, 9, 10, 11],  # blended blues
+    'oriental':           [0, 1, 4, 5, 6, 9, 10],
+    'jewish_ahava_raba':  [0, 1, 4, 5, 7, 8, 10],         # phrygian dominant alt
+    'super_locrian_bb7':  [0, 1, 3, 4, 6, 8, 9],          # bb7 altered
+    'lydian_minor':       [0, 2, 4, 6, 7, 8, 10],         # lydian b6
+    'lydian_aug':         [0, 2, 4, 6, 8, 9, 11],         # lydian #5
+    'locrian_nat6':       [0, 1, 3, 5, 6, 9, 10],
+    'mixolydian_b6':      [0, 2, 4, 5, 7, 8, 10],
+    'dorian_b2':          [0, 1, 3, 5, 7, 9, 10],         # 2nd mode of melodic minor
+    'ionian_sharp5':      [0, 2, 4, 5, 8, 9, 11],         # 3rd mode of harmonic minor (Ionian #5)
+    'dorian_sharp4':      [0, 2, 3, 6, 7, 9, 10],         # 4th mode of harmonic minor (Ukrainian)
 }
 
 
