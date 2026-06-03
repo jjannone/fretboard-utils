@@ -1485,18 +1485,43 @@ def generate_scalar_run(root_name: str, scale_name: str, *,
                         max_capo: int = 5, max_distinct_capos: int = 2,
                         max_step: int = 2, allow_one_minor_third: bool = True,
                         allow_one_wild_jump: bool = False,
+                        wild_jump_span_threshold: int = 3,
                         max_body_span: int = 7,
                         fret_max: int = 22, choose: int = 0):
     """Pick a scalar-run capo + fingering combination. Returns
-    (string_configs, pattern). Raises ValueError if no run is found."""
-    cands = find_scalar_runs(root_name, scale_name,
-                             max_capo=max_capo,
-                             max_distinct_capos=max_distinct_capos,
-                             max_step=max_step,
-                             allow_one_minor_third=allow_one_minor_third,
-                             allow_one_wild_jump=allow_one_wild_jump,
-                             max_body_span=max_body_span,
-                             fret_max=fret_max)
+    (string_configs, pattern). Raises ValueError if no run is found.
+
+    Default behaviour is *tiered*: first search with the m3 budget only
+    (no wild jump), and if the tightest result still has body_span greater
+    than `wild_jump_span_threshold` (default 3), retry with the wild jump
+    enabled and use whichever search yields the smaller span. The musical
+    rationale: an m3 hop is closer to stepwise motion than an arbitrary
+    leap, so prefer it when the geometry permits; only escalate when a
+    pure-m3 fingering exceeds a hand-friendly fret span.
+
+    Pass `wild_jump_span_threshold=None` to disable escalation entirely.
+    Pass `allow_one_wild_jump=True` to bypass tiering and always allow
+    wild jumps from the start (the caller's explicit override wins).
+    """
+    def _search(wild):
+        return find_scalar_runs(root_name, scale_name,
+                                max_capo=max_capo,
+                                max_distinct_capos=max_distinct_capos,
+                                max_step=max_step,
+                                allow_one_minor_third=allow_one_minor_third,
+                                allow_one_wild_jump=wild,
+                                max_body_span=max_body_span,
+                                fret_max=fret_max)
+    if allow_one_wild_jump:
+        cands = _search(True)
+    else:
+        cands = _search(False)
+        if wild_jump_span_threshold is not None and (
+                not cands or cands[0]['body_span'] > wild_jump_span_threshold):
+            wild_cands = _search(True)
+            if wild_cands and (not cands
+                               or wild_cands[0]['body_span'] < cands[0]['body_span']):
+                cands = wild_cands
     if not cands:
         raise ValueError(
             f"No scalar-run configuration found for {root_name} {scale_name}"
@@ -1671,20 +1696,23 @@ def generate_scalar_run_and_render(root_name: str, scale_name: str, *,
                                    max_step: int = 2,
                                    allow_one_minor_third: bool = True,
                                    allow_one_wild_jump: bool = False,
+                                   wild_jump_span_threshold: int = 3,
                                    max_body_span: int = 7,
                                    fret_max: int = 22,
                                    choose: int = 0,
                                    width: int = 20) -> str:
     """One-shot: choose a scalar-run capo + fingering combo and render the
-    diagram, verified. The upper five strings ascend stepwise (m2/M2, with
-    optionally one m3 or one wild jump of any size — see
-    `allow_one_wild_jump`); the lowest string sounds beneath as a bass
-    pedal. Body fingerings fit a holdable shape (max_body_span frets)."""
+    diagram, verified. The upper five strings ascend stepwise; the lowest
+    string sounds beneath as a bass pedal. Defaults to tiered selection:
+    prefer the m3-budget result, escalate to a wild jump only when the m3
+    result's body span exceeds `wild_jump_span_threshold` (default 3).
+    See `generate_scalar_run` for details."""
     string_configs, pattern = generate_scalar_run(
         root_name, scale_name,
         max_capo=max_capo, max_distinct_capos=max_distinct_capos,
         max_step=max_step, allow_one_minor_third=allow_one_minor_third,
         allow_one_wild_jump=allow_one_wild_jump,
+        wild_jump_span_threshold=wild_jump_span_threshold,
         max_body_span=max_body_span,
         fret_max=fret_max, choose=choose,
     )
