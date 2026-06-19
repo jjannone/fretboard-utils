@@ -1948,11 +1948,25 @@ def generate_full_set(root_name: str, scale_name: str,
          make_2nps(base, 0, cap, None, 'fast_climb', 0)),
     ]
 
-    three_note = [
-        (f'3NPS pos {base}',     make_3nps(base)),
-        (f'3NPS pos {base + 3}', make_3nps(base + 3)),
-        (f'3NPS pos {base + 5}', make_3nps(base + 5)),
-    ]
+    # Try a spread of start_frets and keep up to three DISTINCT 3NPS
+    # patterns. With high spider-capo configs the picker can collapse to
+    # the same shape across nearby start_frets (e.g. when the root-on-low-E
+    # constraint forces the bass note to a single fret regardless of base),
+    # so naively picking base, base+3, base+5 may yield duplicates. Walk a
+    # wider range, dedupe by pattern equality, and fall back to whatever
+    # unique positions exist (1, 2, or 3 — not more than 3).
+    candidate_starts = [base, base + 3, base + 5,
+                        base + 2, base + 7, base - 1, base + 10, base + 12]
+    seen_diagrams = set()
+    three_note = []
+    for start in candidate_starts:
+        if start < 1 or start > 22 or len(three_note) >= 3:
+            continue
+        diag = make_3nps(start)
+        if diag is None or diag in seen_diagrams:
+            continue
+        seen_diagrams.add(diag)
+        three_note.append((f'3NPS pos {start}', diag))
 
     # Two arpeggio voicings at different neck positions. Both use the
     # diatonic 7th chord (1-3-5-7); the picker chooses the closest chord-tone

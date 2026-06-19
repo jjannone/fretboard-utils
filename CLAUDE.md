@@ -456,11 +456,24 @@ slash chords, clusters etc. are NOT in the recognised set — they show as
 - Anything else (intervals not in `_CHORD_TYPE_NAMES`) → `Drone? (degrees)`.
 
 ### Full sets
-- `generate_full_set(root, scale, ...)` returns three rows of diagrams: 3 two-note
-  variations, 3 three-note (3NPS) positions ascending up the neck, and 2 arpeggios.
+- `generate_full_set(root, scale, ...)` returns three rows of diagrams: 6 two-note
+  variations, **up to 3** three-note (3NPS) positions ascending up the neck, and
+  2 arpeggios.
 - The **root is forced onto the low E string** in every diagram of a full set
   (and is also available via `require_root_on_low_e=True` on the individual generators).
 - Pass `second_capo_fret=N` to convert any `'X'` strings to a second spider capo at fret N.
+- **3NPS positions are auto-deduplicated.** With high spider-capo configs the
+  `require_root_on_low_e` constraint can force the bass note to a single fret
+  regardless of `start_fret`, collapsing two or three of the 3NPS positions to
+  identical patterns. The generator walks a wider candidate range (base,
+  base±3, ±5, ±7, ±10, etc.) and keeps only the **distinct** patterns it finds,
+  so the `three_note` section may contain 1, 2, or 3 entries rather than always
+  3. **Always confirm 3NPS variety** when authoring a chat reply with a full
+  set: if the section reduces to fewer than 3 distinct positions, either find
+  an alternative `start_fret` manually or simply present the unique ones.
+- ASCII display layout for chat: **three diagrams across** for the two-note
+  variants (in two rows of 3, since there are 6) and the 3NPS positions, **two
+  across** for the arpeggios. One markdown code block per row.
 
 ## Before generating patterns — READ THIS FILE FIRST
 Before writing any demo or example code, re-read this file in full so all rules are active.
