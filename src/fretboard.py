@@ -1933,7 +1933,29 @@ def generate_full_set(root_name: str, scale_name: str,
     # All stay within the scale's finger-reach cap (a minor 3rd, or a major 3rd
     # for scales with no minor 3rd such as whole-tone).
     cap = effective_finger_step(scale_name)
-    two_note = [
+
+    def _diagram_is_degenerate(diagram):
+        """A variant is degenerate when its picker collapsed and most
+        sounding strings end up with the same set of body-note pitch
+        classes — musically that means most strings play the same notes
+        in different octaves, which defeats the purpose of varying the
+        2NPS / 3NPS shape. Common with sparse scales (pentatonics) and
+        the wide stretch profile, where only one m3 pair exists.
+
+        Threshold: True if **5 or more** sounding strings share an
+        identical pitch-class set (out of typically 6). A 4/6 share is
+        common in legitimate alternating patterns; 5/6 is collapse."""
+        per_string_pcs = {}
+        for pos, fret, _col in parse_diagram(diagram):
+            per_string_pcs.setdefault(pos, set()).add(
+                (OPEN_STRINGS[pos] + fret) % 12)
+        if len(per_string_pcs) < 3:
+            return False
+        from collections import Counter
+        counts = Counter(frozenset(s) for s in per_string_pcs.values())
+        return counts.most_common(1)[0][1] >= 5
+
+    two_note_raw = [
         ('tight (m2)',
          make_2nps(base, 0, 2, STRETCH_PROFILES['tight'], 'up', 0)),
         ('wide',
@@ -1947,6 +1969,15 @@ def generate_full_set(root_name: str, scale_name: str,
         ('fast climbing',
          make_2nps(base, 0, cap, None, 'fast_climb', 0)),
     ]
+    # Drop variants where the picker collapsed (every string plays the
+    # same notes — common on sparse pentatonic scales when "wide" is the
+    # requested stretch). Always keep at least 'tight (m2)' even if it
+    # collapses, so the user has something to anchor on.
+    two_note = []
+    for i, (label, diag) in enumerate(two_note_raw):
+        if i > 0 and _diagram_is_degenerate(diag):
+            continue
+        two_note.append((label, diag))
 
     # Try a spread of start_frets and keep up to three DISTINCT 3NPS
     # patterns. With high spider-capo configs the picker can collapse to
@@ -1964,6 +1995,8 @@ def generate_full_set(root_name: str, scale_name: str,
             continue
         diag = make_3nps(start)
         if diag is None or diag in seen_diagrams:
+            continue
+        if three_note and _diagram_is_degenerate(diag):
             continue
         seen_diagrams.add(diag)
         three_note.append((f'3NPS pos {start}', diag))

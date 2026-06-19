@@ -471,6 +471,16 @@ slash chords, clusters etc. are NOT in the recognised set — they show as
   3. **Always confirm 3NPS variety** when authoring a chat reply with a full
   set: if the section reduces to fewer than 3 distinct positions, either find
   an alternative `start_fret` manually or simply present the unique ones.
+- **Degenerate-variant filter.** With sparse scales (pentatonics, hexatonics)
+  the 2NPS picker can collapse so that every string plays the same pair of
+  pitch classes in different octaves — e.g. F bati_major's "wide" variant
+  picks A→C on every string because that's the only m3 pair in the scale.
+  `generate_full_set` runs `_diagram_is_degenerate(diagram)` on each variant
+  and drops it from the section when all body-bearing strings share an
+  identical pitch-class set (the `tight (m2)` variant is always kept as a
+  fallback). The same check is applied to 3NPS positions beyond the first.
+  When authoring chat output: spot-check that the displayed variants
+  actually differ in note content, not just fret position.
 - ASCII display layout for chat: **three diagrams across** for the two-note
   variants (in two rows of 3, since there are 6) and the 3NPS positions, **two
   across** for the arpeggios. One markdown code block per row.
