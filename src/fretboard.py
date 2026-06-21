@@ -1996,7 +1996,12 @@ def generate_full_set(root_name: str, scale_name: str,
         diag = make_3nps(start)
         if diag is None or diag in seen_diagrams:
             continue
-        if three_note and _diagram_is_degenerate(diag):
+        if _diagram_is_degenerate(diag):
+            # Sparse scales (pentatonics) can force the 3NPS picker into
+            # one tight consecutive-scale-tone triple on every string,
+            # producing musically identical content at every fret. Drop
+            # the candidate; if all candidates are degenerate the section
+            # ends up empty, which is honest about the scale's geometry.
             continue
         seen_diagrams.add(diag)
         three_note.append((f'3NPS pos {start}', diag))
