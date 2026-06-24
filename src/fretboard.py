@@ -871,6 +871,34 @@ _TUNING_PRESETS = {
 OPEN_MIDI = [40, 45, 50, 55, 59, 64]  # position-indexed, parallel to STRING_NOTES
 
 
+# Hand-curated favorite spider-capo configurations. Each entry pairs a
+# tuning with a specific capo placement and the scales it sounds good
+# under, so they can be recalled by name later. Add new entries here;
+# users retrieve via `favorite_capo(name)`.
+FAVORITE_CAPOS = {
+    # All-fourths (EADGCF) with capos `1 1 0 2 2 0` (low-to-high). Drones
+    # spell F A♯ D A D F — a D minor triad with an added ♭6 (Bb), or
+    # equivalently an F6 voicing. Works under D natural minor, D phrygian,
+    # F major, or G dorian; the b6 colour pulls toward modal-minor.
+    'fourths_dm_b6_drone': {
+        'tuning': 'guitar_fourths',
+        'pattern': '1 1 0 2 2 0',
+        'string_configs': {0: 1, 1: 1, 3: 2, 4: 2},
+        'drones': 'F A# D A D F',
+        'feel': 'D minor + ♭6 / F major drone',
+        'scales': [('D', 'natural_minor'), ('D', 'phrygian'),
+                   ('F', 'major'), ('G', 'dorian')],
+    },
+}
+
+
+def favorite_capo(name: str) -> dict:
+    """Look up a hand-curated favorite spider-capo configuration by name.
+    Returns the entry's dict (with 'tuning', 'string_configs', 'scales' …)
+    or raises KeyError. Use list(FAVORITE_CAPOS) to see all names."""
+    return FAVORITE_CAPOS[name]
+
+
 @contextmanager
 def use_tuning(name: str):
     """Temporarily switch the active instrument tuning for generation/rendering.

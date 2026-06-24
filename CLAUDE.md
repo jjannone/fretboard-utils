@@ -59,6 +59,11 @@ below already exist in [src/fretboard.py](src/fretboard.py). Use them.
   See `effective_finger_step(scale)` for the per-scale cap (raised to M3 = 4 for
   scales with no minor 3rd, e.g. whole-tone).
 - `DEGREE_LABEL` — semitone-interval → degree string (`'1'`, `'♭2'`, `'3'`, `'♯4'`, `'♯5'`, …).
+- `FAVORITE_CAPOS` — hand-curated spider-capo configurations the user has
+  flagged as favorites. Each entry pairs a tuning, a capo placement, the
+  resulting drones, and the scales that sound good under it. Look up by
+  name via `favorite_capo(name)`. Add new entries as the user discovers
+  good ones; existing entries are stable references for follow-up tabs.
 
 ### Instrument tunings
 - The module defaults to 6-string guitar (EADGBe). To generate/render for another
