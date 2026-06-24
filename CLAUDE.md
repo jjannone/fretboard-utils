@@ -42,8 +42,14 @@ Before writing any new naming/labeling/spelling code, check this list. All helpe
 below already exist in [src/fretboard.py](src/fretboard.py). Use them.
 
 ### Constants and tables
-- `OPEN_STRINGS` — dict mapping string letter to open pitch class (the *active*
-  tuning; guitar EADGBe by default).
+- `STRING_NOTES` — list of display letters per position (low to high). May
+  contain duplicates (drop-D's `['D', 'A', 'D', 'G', 'B', 'e']`, all-E's
+  `['E', 'E', 'E', 'E', 'e', 'e']`).
+- `OPEN_STRINGS` — list of open-string pitch classes, position-indexed
+  (parallel to `STRING_NOTES`). Access as `OPEN_STRINGS[pos]`.
+- `OPEN_MIDI` — list of absolute open MIDI numbers (E2 = 40 for guitar position
+  0). Position-indexed. Used by the cluster/scalar-run finders, which need
+  absolute pitch (not just pitch class).
 - `NOTE_NAMES` — 12 sharps-only note names.
 - `STRING_ORDER_LOW_TO_HIGH`, `STRING_ORDER_DISPLAY` — string letter orderings
   (also reflect the active tuning).
@@ -53,16 +59,54 @@ below already exist in [src/fretboard.py](src/fretboard.py). Use them.
   See `effective_finger_step(scale)` for the per-scale cap (raised to M3 = 4 for
   scales with no minor 3rd, e.g. whole-tone).
 - `DEGREE_LABEL` — semitone-interval → degree string (`'1'`, `'♭2'`, `'3'`, `'♯4'`, `'♯5'`, …).
+- `FAVORITE_CAPOS` — hand-curated spider-capo configurations the user has
+  flagged as favorites. Each entry pairs a tuning, a capo placement, the
+  resulting drones, and the scales that sound good under it. Look up by
+  name via `favorite_capo(name)`. Add new entries as the user discovers
+  good ones; existing entries are stable references for follow-up tabs.
 
 ### Instrument tunings
 - The module defaults to 6-string guitar (EADGBe). To generate/render for another
-  instrument, wrap the calls in `with use_tuning(name): …`. This temporarily
-  rebinds the tuning globals (`OPEN_STRINGS`, the string orders, the line regex,
-  `STRETCH_PROFILES`) and restores them on exit.
-- Presets: `'guitar'` (EADGBe), `'bass_6'` (BEADGC, low B to high C).
-- Inside a tuning block, "root on the lowest string" targets that tuning's lowest
-  string (B for `bass_6`, E for guitar). String letters may differ (bass adds a
-  low `B` and high `C`); all helpers key off the active `OPEN_STRINGS`.
+  instrument or alternate tuning, wrap the calls in `with use_tuning(name): …`.
+  This temporarily rebinds the tuning globals (`STRING_NOTES`, `OPEN_STRINGS`,
+  `OPEN_MIDI`, the string orders, the line regex, `STRETCH_PROFILES`) and
+  restores them on exit.
+- Built-in presets:
+  - `'guitar'` — EADGBe (default).
+  - `'bass_6'` — BEADGC.
+  - `'guitar_fourths'` — EADGCF (all-fourths).
+  - `'guitar_fifths'` — CGDAEB (all-fifths).
+  - `'drop_d'` — DADGBe (two D's).
+  - `'dadgad'` — DADGAD (three D's, two A's).
+  - `'all_E'` — EEEEee (every string tuned to E, four octaves apart).
+- **Strings are identified by integer position** (`0` = lowest, `N-1` = highest),
+  not by letter. Display letters are stored in the parallel list `STRING_NOTES`
+  and may repeat freely (the duplicates show up in `tuning_label()` as
+  `'DADGBe'`, `'EEEEee'`, etc.). `OPEN_STRINGS` and `OPEN_MIDI` are
+  position-indexed lists, *not* dicts; access them as `OPEN_STRINGS[pos]`.
+- **String identifier resolution**: any helper that takes a `string` argument
+  (`pitch_at`, `note_name`, `drone_label`, `frets_in_scale`, `per_string_chord`)
+  accepts either an int position or a display letter via `_to_pos()`. A letter
+  is only resolvable if it appears exactly once in the active tuning. In
+  duplicate-letter tunings (drop-D's `'D'`, all-E's `'E'`/`'e'`), pass an int
+  position instead — the helper raises `ValueError` with a clear message.
+- **`string_configs` keys**: accept ints or unique letters. They get normalized
+  to int position keys at every public entry point via
+  `_normalize_string_configs()`. In a duplicate-letter tuning you must use ints
+  (`{0: 0, 2: 0}` for the two D's of drop-D, not `{'D': 0}`).
+- **Diagram line prefixes** are just the display letter from `STRING_NOTES[pos]`
+  (always single-char) followed by the config char and body. Lines look the
+  same regardless of tuning, e.g. `D0 -------|`. In a duplicate-letter tuning,
+  multiple lines may have identical prefixes — the line's display order in the
+  diagram (top to bottom = high to low) is what identifies its position.
+  `parse_diagram` returns `(position, fret, col)` tuples, using line order for
+  the position.
+- Inside a tuning block, "root on the lowest string" targets that tuning's
+  lowest string (position 0).
+- **Scalar-run mode and all-fifths**: the uniform P5 (7-semitone) string
+  intervals can't be compressed into seconds within reasonable spans, so
+  cross-string scalar runs there typically need `max_body_span >= 10`.
+  All-fourths (uniform P4) needs ~6–7 like bass.
 
 ### Pitch math
 - `scale_pitches(root, scale)` → set of pitch classes in the scale. Use to test scale membership.
@@ -115,11 +159,44 @@ caller-passed values above the cap are silently clamped.
 - `generate_arpeggio(root, scale, …)` — chord-tone pattern. Tries a 2-chord-tone pair
   within `max_stretch` (default `MAX_FINGER_STEP`) on each string and falls back to
   one chord tone where no pair fits. Default `degrees=(1, 3, 5, 7)`.
+- `find_cluster_drones(root, scale, max_capo=4, max_distinct_capos=2)` —
+  enumerate every spider-capo configuration whose six drone pitch classes form
+  a contiguous block of scale tones. Returns ranked list of dicts with
+  `'string_configs'`, `'drone_pcs'`, `'drones_midi'`, `'capo_frets'`,
+  `'top_capo'`, `'ascending'`.
+- `generate_cluster(root, scale, body_notes_per_string=0, …)` — pick the
+  best cluster config and (optionally) add body notes. Returns
+  `(string_configs, pattern)`.
+- `find_scalar_runs(root, scale, max_capo=5, max_distinct_capos=2,
+  max_step=2, allow_one_minor_third=True, max_body_span=7, fret_max=22)` —
+  enumerate capo + fingering combinations whose upper five strings
+  ascend stepwise (m2/M2 steps, with optionally one m3) and whose
+  lowest string is a bass pedal beneath. Body fingerings fit a
+  holdable chord shape (`max_body_span` semitones across all fretted
+  positions). Each string contributes its drone or one body fret
+  above the capo bar. Note the `max_capo=5` default — higher than
+  the global 4 — see "Scalar-run mode" for why.
+- `generate_scalar_run(root, scale, …)` — pick the best run, return
+  `(string_configs, pattern)`.
 
 ### Generators (high-level — return verified, rendered ASCII diagrams)
 - `generate_and_render(root, scale, …)` — 2NPS, verified.
 - `generate_3nps_and_render(root, scale, …)` — 3NPS, verified.
 - `generate_arpeggio_and_render(root, scale, …)` — arpeggio, verified.
+- `generate_scalar_run_and_render(root, scale, …)` — **scalar-run mode**:
+  the upper five strings form an ascending stepwise scale fragment
+  (m2/M2 steps; one m3 hop allowed for scales like harmonic minor),
+  with the lowest string sounding beneath as a bass pedal. Body
+  fingerings fit a holdable chord shape (default `max_body_span=7`
+  frets). See "Scalar-run mode" below.
+- `generate_cluster_and_render(root, scale, …)` — **cluster mode**: search the
+  spider-capo space for a configuration whose six drone pitches form six
+  consecutive scale-tones (a stacked-seconds cluster chord when strummed).
+  See "Cluster mode" below for the math and what it does and doesn't deliver.
+  Knobs: `max_capo` (default 4), `max_distinct_capos` (default 2),
+  `body_notes_per_string` (default 0 — drones-only diagram; >0 adds that many
+  fretted in-scale notes per string, picked just above each drone), `choose`
+  (which ranked candidate to use; 0 = best).
 - `generate_full_set(root, scale, string_configs=None, second_capo_fret=None, …)` →
   dict with three labeled sections: `'two_note'` (**6 variants**: tight, wide,
   alternating, descending, climbing, fast climbing), `'three_note'` (3 ascending
@@ -128,11 +205,15 @@ caller-passed values above the cap are silently clamped.
   convert any `'X'` strings into a second spider capo at fret N.
 
 ### Rendering
-- `render(pattern, label, width, string_configs)` — base ASCII renderer for one pattern.
-  Honors capo-bar shift in the body columns.
+- `render(pattern, label, width, string_configs, show_tuning=True)` — base ASCII
+  renderer for one pattern. Honors capo-bar shift in the body columns. Prepends
+  a `Tuning: <letters>` header line by default; composers (`render_full_set`,
+  `generate_full_set`'s inner renders) pass `show_tuning=False` and emit one
+  header for the whole chart.
 - `render_full_set(full_set, gap)` — arranges a `generate_full_set()` result into a
-  3-row grid with centred labels per column.
+  3-row grid with centred labels per column, with one `Tuning:` header at the top.
 - `side_by_side(left, left_label, right, right_label, gap)` — two diagrams + labels.
+  (Each input diagram already carries its own `Tuning:` header from `render`.)
 
 ### Validation
 - `_validate_capo_count(string_configs, max_capos=2)` — raises `ValueError` if there are
@@ -145,6 +226,8 @@ caller-passed values above the cap are silently clamped.
 | Quick one-off diagram for a scale | `generate_and_render(root, scale)` |
 | Higher-density single-position scale | `generate_3nps_and_render(root, scale, start_fret=…)` |
 | Chord-tone outline | `generate_arpeggio_and_render(root, scale, degrees=…)` |
+| Strum-a-cluster capo config | `generate_cluster_and_render(root, scale)` |
+| Ascending scalar run across strings | `generate_scalar_run_and_render(root, scale)` |
 | Practice set (8 diagrams) | `generate_full_set(...)` then `render_full_set(...)` |
 | Two diagrams labelled side-by-side | `side_by_side(...)` |
 | Custom pattern (build the dict yourself) | `pick_pair`/`pick_triple`/`pick_single` then `render` |
@@ -262,6 +345,72 @@ Mix shapes and profiles: e.g. arch shape + alternating stretch, or sweep + shrin
   (e.g. the required first pitch class lies past `fret_max`), drop the
   continuity constraint, then the root-on-low-E constraint, then relax span.
 
+### Scalar-run mode (capo + fingering ascending run, bass pedal + holdable chord)
+- **Idea**: the **upper five strings** form an ascending stepwise scale
+  fragment (m2/M2 steps, with optionally a single m3 hop), and the
+  **lowest string** sounds beneath as a bass pedal at any in-scale pitch
+  ≤ the second string's pitch. Each upper string contributes one note —
+  drone (open/capo) or a single fretted note above the capo bar.
+- Decoupling the bass from the stepwise run is what makes the pattern
+  reachable. The natural P4/M3 string intervals can't be compressed
+  to seconds across all five string boundaries with a 4-fret capo
+  budget, so requiring strict-stepwise across all six strings would
+  force every string to be fretted with a fret-span of 10+ semitones —
+  unholdable. Letting the low string drop free (it goes wider than a
+  third below the next note, typically an octave-and-a-bit) means only
+  the upper five must stepwise-ascend, and the body fingerings can fit
+  a holdable chord shape.
+- **Scalar-run mode uses `max_capo=5` by default** (vs the global 4
+  used elsewhere). The extra fret of capo budget per string is the
+  difference between needing 3 body notes spanning 6-7 frets and
+  needing just 2 body notes spanning 3-4 frets. Most spider capos can
+  reach fret 5; the rule about "no single capo across all strings"
+  (which would just be a transposition) still applies.
+- `max_body_span` caps the total fret span across all body notes
+  (default 7). With `max_capo=5`: altered, whole_tone, natural minor,
+  and harmonic minor all land at span 3 with 4 drones and 2 body
+  fingerings. Major, enigmatic stay at 6 with 3 body notes.
+  Lydian dominant and half-whole diminished stay at 7. Bass (uniform
+  P4 intervals) typically needs `max_body_span=8`.
+- Ranking prefers, in order: smaller body span > no m3 hop > more
+  drones used > fewer distinct capo frets > lower top capo. Span
+  comes first because the user-facing goal of this mode is a holdable
+  chord shape; an m3 hop is cheap musically.
+- Typical guitar shape: capo at fret 3 on the B string and fret 5 on
+  the G string (or capo 4 on B alone for major/enigmatic), with body
+  fingerings on A/D at ~11/8 frets, drone E top and bottom.
+  Strumming low-to-high gives a bass octave pedal under an ascending
+  stepwise voicing on the upper five strings.
+- Works under `use_tuning('bass_6')`; bass typically needs
+  `max_body_span=8`.
+
+### Cluster mode (capo-driven stacked-seconds drone chord)
+- **Idea**: pick spider-capo positions so that the six open/capo drones land on
+  six adjacent scale-tones (a "cluster of seconds" chord voicing) — the
+  alternative to the 3rds-and-4ths voicings that natural tunings produce.
+- **Hard fact (don't promise more than this delivers)**: with `max_capo=4` and
+  any standard tuning, a strictly stepwise ascending run across all six
+  strings is mathematically impossible. The natural open-string intervals
+  (P4 / M3) total ≥ 24 semitones across the five string boundaries; capos
+  add only 0..4 frets per string, so the capo budget cannot compress those
+  intervals down to seconds across five jumps. The six drones can still form
+  a **stacked-seconds chord** when strummed, but the strummed *order* will
+  include some jumps wider than a second.
+- `find_cluster_drones` brute-forces all `(max_capo+1)^6` capo combinations,
+  filters to those with ≤ `max_distinct_capos` distinct nonzero frets and
+  six distinct drone pcs that form a contiguous scale-tone block, and ranks:
+  1. configs whose drone midi sequence strictly ascends across strings,
+  2. then fewer distinct capo frets (1 > 2),
+  3. then lower top capo fret (more playable).
+- `generate_cluster` picks the best (or `choose=k`-th best) config. By
+  default `body_notes_per_string=0` — the diagram is the capo config itself,
+  with empty body. Setting it to `1` adds one in-scale fret per string just
+  above each drone, picked above `body_fret_min` (which respects the highest
+  capo bar) — useful as a scalar continuation when picking the strings.
+- Works under `use_tuning('bass_6')` (BEADGC) too. Bass has uniform P4
+  intervals so cluster solutions are still findable; capos required tend to
+  be higher than on guitar.
+
 ### Arpeggio picker (pair-first, chord-forming, full scale)
 - `generate_arpeggio` pulls from the **full scale** (not a fixed chord-tone
   set) so the picker has dense pair options near every position.
@@ -312,11 +461,34 @@ slash chords, clusters etc. are NOT in the recognised set — they show as
 - Anything else (intervals not in `_CHORD_TYPE_NAMES`) → `Drone? (degrees)`.
 
 ### Full sets
-- `generate_full_set(root, scale, ...)` returns three rows of diagrams: 3 two-note
-  variations, 3 three-note (3NPS) positions ascending up the neck, and 2 arpeggios.
+- `generate_full_set(root, scale, ...)` returns three rows of diagrams: 6 two-note
+  variations, **up to 3** three-note (3NPS) positions ascending up the neck, and
+  2 arpeggios.
 - The **root is forced onto the low E string** in every diagram of a full set
   (and is also available via `require_root_on_low_e=True` on the individual generators).
 - Pass `second_capo_fret=N` to convert any `'X'` strings to a second spider capo at fret N.
+- **3NPS positions are auto-deduplicated.** With high spider-capo configs the
+  `require_root_on_low_e` constraint can force the bass note to a single fret
+  regardless of `start_fret`, collapsing two or three of the 3NPS positions to
+  identical patterns. The generator walks a wider candidate range (base,
+  base±3, ±5, ±7, ±10, etc.) and keeps only the **distinct** patterns it finds,
+  so the `three_note` section may contain 1, 2, or 3 entries rather than always
+  3. **Always confirm 3NPS variety** when authoring a chat reply with a full
+  set: if the section reduces to fewer than 3 distinct positions, either find
+  an alternative `start_fret` manually or simply present the unique ones.
+- **Degenerate-variant filter.** With sparse scales (pentatonics, hexatonics)
+  the 2NPS picker can collapse so that every string plays the same pair of
+  pitch classes in different octaves — e.g. F bati_major's "wide" variant
+  picks A→C on every string because that's the only m3 pair in the scale.
+  `generate_full_set` runs `_diagram_is_degenerate(diagram)` on each variant
+  and drops it from the section when all body-bearing strings share an
+  identical pitch-class set (the `tight (m2)` variant is always kept as a
+  fallback). The same check is applied to 3NPS positions beyond the first.
+  When authoring chat output: spot-check that the displayed variants
+  actually differ in note content, not just fret position.
+- ASCII display layout for chat: **three diagrams across** for the two-note
+  variants (in two rows of 3, since there are 6) and the 3NPS positions, **two
+  across** for the arpeggios. One markdown code block per row.
 
 ## Before generating patterns — READ THIS FILE FIRST
 Before writing any demo or example code, re-read this file in full so all rules are active.

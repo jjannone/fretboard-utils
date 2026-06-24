@@ -12,7 +12,10 @@ from fretboard import (
     render, generate_and_render, generate_3nps_and_render,
     generate_arpeggio_and_render, generate_full_set, render_full_set,
     all_diagram_frets_in_range,
-    MAX_FINGER_STEP, OPEN_STRINGS, SCALES, NOTE_NAMES,
+    find_cluster_drones, generate_cluster, generate_cluster_and_render,
+    find_scalar_runs, generate_scalar_run, generate_scalar_run_and_render,
+    use_tuning, tuning_label,
+    MAX_FINGER_STEP, OPEN_STRINGS, OPEN_MIDI, SCALES, NOTE_NAMES,
 )
 
 
@@ -55,16 +58,17 @@ E|---3-5----|"""
     notes = parse_diagram(d)
     # 12 notes total (2 per string * 6 strings)
     assert len(notes) == 12
-    # Check first note (high e, fret 3)
-    assert notes[0][:2] == ('e', 3)
+    # First parsed line is the top-of-display string (high e = position 5)
+    assert notes[0][:2] == (5, 3)
 
 
 def test_parse_adjacent_frets():
     d = """e|---34----|"""
     notes = parse_diagram(d)
     assert len(notes) == 2
-    assert notes[0][:2] == ('e', 3)
-    assert notes[1][:2] == ('e', 4)
+    # Single-line diagram: position 5 (only line, top of display)
+    assert notes[0][:2] == (5, 3)
+    assert notes[1][:2] == (5, 4)
 
 
 def test_verify_correct_diagram():
@@ -181,10 +185,9 @@ def test_full_set_root_on_low_e():
                            string_configs={'E': 1, 'A': 1, 'D': 'X', 'G': 'X'},
                            second_capo_fret=3)
     root_pc = NOTE_NAMES.index('C')
-    open_e = OPEN_STRINGS['E']
+    open_e = OPEN_STRINGS[0]  # low E is position 0
     for section in fs.values():
         for label, diagram in section:
-            # Locate the low-E line; check capo drone + body notes via parse_diagram
             e_line = next((ln for ln in diagram.split('\n') if ln.startswith('E')), None)
             assert e_line is not None
             has_root = False
@@ -193,8 +196,8 @@ def test_full_set_root_on_low_e():
                 capo_fret = int(cfg_char)
                 if (open_e + capo_fret) % 12 == root_pc:
                     has_root = True
-            for s, fret, _col in parse_diagram(diagram):
-                if s == 'E' and (open_e + fret) % 12 == root_pc:
+            for pos, fret, _col in parse_diagram(diagram):
+                if pos == 0 and (open_e + fret) % 12 == root_pc:
                     has_root = True
             assert has_root, f"No root on low E for '{label}': {e_line!r}"
 
@@ -270,7 +273,7 @@ def test_open_e_drone_satisfies_root_on_e_rooted_scale():
     diagram = generate_3nps_and_render('E', 'enigmatic', start_fret=5,
                                         string_configs={'A': 1, 'G': 1, 'B': 4},
                                         require_root_on_low_e=True)
-    e_low_frets = sorted(f for s, f, _c in parse_diagram(diagram) if s == 'E')
+    e_low_frets = sorted(f for pos, f, _c in parse_diagram(diagram) if pos == 0)
     # Triple should sit near target=5; lowest fret should be within ~m3 of it,
     # NOT pinned to fret 12 (which is what a forced-root-in-body would give).
     assert min(e_low_frets) <= 8, \
@@ -357,7 +360,7 @@ def test_render_shifts_columns_by_higher_capo():
     assert b_line.startswith('B4 56-'), f"Unexpected B line: {b_line!r}"
     # And the round-trip via parse_diagram recovers the original frets
     notes = parse_diagram(diag)
-    b_notes = sorted(f for s, f, _c in notes if s == 'B')
+    b_notes = sorted(f for pos, f, _c in notes if pos == 4)  # B = position 4
     assert b_notes == [5, 6], f"parse_diagram returned {b_notes} for B"
 
 
@@ -368,6 +371,254 @@ def test_render_full_set_layout():
     # 3 sections separated by '\n\n'
     sections = out.split('\n\n')
     assert len(sections) == 3, f"Expected 3 sections, got {len(sections)}"
+
+
+def test_cluster_drones_form_contiguous_scale_block():
+    """Every config returned by find_cluster_drones has six distinct drone
+    pitch classes that are six consecutive scale-tones (with octave wrap)."""
+    for scale in ['major', 'altered', 'enigmatic', 'lydian_dominant', 'whole_tone']:
+        cands = find_cluster_drones('E', scale)
+        assert cands, f"expected cluster configs for E {scale}"
+        scale_pcs = sorted(scale_pitches('E', scale))
+        n = len(scale_pcs)
+        valid_blocks = [frozenset(scale_pcs[(start + k) % n] for k in range(6))
+                        for start in range(n)]
+        for c in cands:
+            assert len(set(c['drone_pcs'])) == 6
+            assert frozenset(c['drone_pcs']) in valid_blocks, \
+                f"{scale}: {c['drone_pcs']} is not a contiguous block"
+
+
+def test_cluster_capo_limits_respected():
+    """No cluster config uses more than 2 distinct nonzero capo frets, and
+    every capo fret is within 0..max_capo."""
+    for scale in ['major', 'altered', 'lydian_dominant', 'enigmatic', 'half_whole_dim']:
+        for c in find_cluster_drones('E', scale, max_capo=4, max_distinct_capos=2):
+            assert len(c['capo_frets']) <= 2
+            assert all(1 <= f <= 4 for f in c['capo_frets'])
+
+
+def test_cluster_diagram_verifies_with_body_notes():
+    """Adding body notes still yields a diagram whose every fretted note is
+    in scale and above the highest capo bar."""
+    for scale in ['major', 'altered', 'lydian_dominant']:
+        d = generate_cluster_and_render('E', scale, body_notes_per_string=1)
+        cfg, _ = generate_cluster('E', scale, body_notes_per_string=1)
+        assert verify(d, 'E', scale)
+        assert all_diagram_frets_in_range(d, cfg)
+
+
+def test_cluster_bass_tuning():
+    """Cluster finder works inside use_tuning('bass_6')."""
+    with use_tuning('bass_6'):
+        cands = find_cluster_drones('E', 'altered')
+        assert cands, "expected at least one cluster config on bass"
+        # Every drone is in scale
+        pcs = scale_pitches('E', 'altered')
+        for c in cands:
+            for pc in c['drone_pcs']:
+                assert pc in pcs
+
+
+def test_open_midi_diffs_match_open_strings():
+    """OPEN_MIDI values agree with OPEN_STRINGS pitch classes (mod 12)."""
+    for pos, midi in enumerate(OPEN_MIDI):
+        assert midi % 12 == OPEN_STRINGS[pos], \
+            f"position {pos}: midi {midi} % 12 != pc {OPEN_STRINGS[pos]}"
+
+
+def test_scalar_run_upper_five_strings_ascend_stepwise():
+    """The upper five strings of a run form five consecutive scale tones,
+    ascending in m2/M2 steps (or up to one m3 if allow_one_minor_third)."""
+    for scale in ['major', 'altered', 'whole_tone', 'lydian_dominant',
+                  'natural_minor', 'half_whole_dim']:
+        cands = find_scalar_runs('E', scale)
+        assert cands, f"expected scalar runs for E {scale}"
+        for c in cands[:5]:
+            seq = c['sequence_midi']
+            assert len(seq) == 6
+            pitches = scale_pitches('E', scale)
+            assert all(m % 12 in pitches for m in seq)
+            # Upper five (indices 1..5) ascend stepwise
+            upper = seq[1:]
+            assert all(upper[i + 1] > upper[i] for i in range(4))
+            steps = [upper[i + 1] - upper[i] for i in range(4)]
+            assert all(s <= 3 for s in steps), f"{scale}: upper steps {steps}"
+            m3s = [s for s in steps if s > 2]
+            assert len(m3s) <= 1, f"{scale}: multiple m3 steps {steps}"
+            assert c['has_minor_third'] == (len(m3s) == 1)
+            # Bass pedal sits at or below the first upper note
+            assert seq[0] <= seq[1]
+
+
+def test_scalar_run_diagram_picks_correct_pitches():
+    """Picking the diagram string-by-string low-to-high reproduces the
+    sequence_midi exactly."""
+    for scale in ['major', 'altered', 'harmonic_minor']:
+        cands = find_scalar_runs('E', scale)
+        c = cands[0]
+        cfg, pat = c['string_configs'], c['pattern']
+        for pos in range(6):
+            if pat[pos]:  # body note present
+                fret = pat[pos][0]
+                actual = OPEN_MIDI[pos] + fret
+            else:  # drone (open or capo)
+                actual = OPEN_MIDI[pos] + cfg.get(pos, 0)
+            assert actual == c['sequence_midi'][pos], \
+                f"{scale} pos {pos}: got {actual}, expected {c['sequence_midi'][pos]}"
+
+
+def test_scalar_run_body_span_within_limit():
+    """No run violates its max_body_span constraint when results exist."""
+    for span in [7, 8, 10]:
+        for scale in ['major', 'altered', 'lydian_dominant']:
+            cands = find_scalar_runs('E', scale, max_body_span=span)
+            assert cands, f"{scale} span={span}: no runs"
+            for c in cands[:5]:
+                assert c['body_span'] <= span
+
+
+def test_scalar_run_diagram_verifies():
+    """The rendered run diagram verifies and respects the capo-bar floor."""
+    for scale in ['major', 'altered', 'lydian_dominant', 'harmonic_minor']:
+        d = generate_scalar_run_and_render('E', scale)
+        cfg, _ = generate_scalar_run('E', scale)
+        assert verify(d, 'E', scale)
+        assert all_diagram_frets_in_range(d, cfg)
+
+
+def test_scalar_run_bass_tuning():
+    """Scalar-run finder works on bass (BEADGC). Bass open strings are
+    uniformly a P4 apart so the body geometry forces a wider span; pass
+    max_body_span=8."""
+    with use_tuning('bass_6'):
+        cands = find_scalar_runs('E', 'altered', max_body_span=8)
+        assert cands, "expected runs on bass"
+        c = cands[0]
+        assert len(c['sequence_midi']) == 6
+        upper = c['sequence_midi'][1:]
+        assert all(upper[i + 1] > upper[i] for i in range(4))
+
+
+def test_tuning_label_tracks_active_tuning():
+    """tuning_label() reflects use_tuning()."""
+    assert tuning_label() == 'EADGBe'
+    with use_tuning('bass_6'):
+        assert tuning_label() == 'BEADGC'
+    with use_tuning('guitar_fourths'):
+        assert tuning_label() == 'EADGCF'
+    with use_tuning('guitar_fifths'):
+        assert tuning_label() == 'CGDAEB'
+    # outside the block, restored
+    assert tuning_label() == 'EADGBe'
+
+
+def test_render_prepends_tuning_header_by_default():
+    diagram = generate_and_render('C', 'major')
+    first_line = diagram.split('\n')[0]
+    assert first_line == 'Tuning: EADGBe', first_line
+
+
+def test_render_can_suppress_tuning_header():
+    d = render({}, label="x", show_tuning=False)
+    assert not d.startswith('Tuning:')
+
+
+def test_full_set_has_single_tuning_header():
+    fs = generate_full_set('A', 'natural_minor')
+    out = render_full_set(fs)
+    assert out.startswith('Tuning: EADGBe')
+    # Only one occurrence of the header
+    assert out.count('Tuning: EADGBe') == 1
+
+
+def test_guitar_fourths_tuning_basic():
+    """A 2NPS diagram on the all-fourths tuning still verifies in scale."""
+    with use_tuning('guitar_fourths'):
+        d = generate_and_render('A', 'natural_minor')
+        assert 'Tuning: EADGCF' in d
+        assert verify(d, 'A', 'natural_minor')
+
+
+def test_open_midi_consistent_across_all_presets():
+    """OPEN_MIDI matches OPEN_STRINGS pitch classes for every preset."""
+    for tuning in ['guitar', 'bass_6', 'guitar_fourths', 'guitar_fifths',
+                   'drop_d', 'dadgad', 'all_E']:
+        with use_tuning(tuning):
+            for pos, midi in enumerate(OPEN_MIDI):
+                assert midi % 12 == OPEN_STRINGS[pos], \
+                    f"{tuning} pos {pos}: midi {midi} % 12 != pc {OPEN_STRINGS[pos]}"
+
+
+def test_parse_diagram_ignores_tuning_header():
+    """parse_diagram skips the 'Tuning: ...' header line gracefully."""
+    d = generate_and_render('C', 'major')
+    notes = parse_diagram(d)
+    assert notes, "expected parsed notes despite header"
+    # Each parsed note's position is a valid index (0..N-1)
+    for pos, f, _col in notes:
+        assert 0 <= pos < len(OPEN_STRINGS)
+
+
+def test_duplicate_letter_tunings_have_position_indexed_lists():
+    """drop_d / dadgad / all_E expose STRING_NOTES with duplicates."""
+    import fretboard as fb
+    with use_tuning('drop_d'):
+        assert fb.STRING_NOTES == ['D', 'A', 'D', 'G', 'B', 'e']
+        assert fb.STRING_ORDER_LOW_TO_HIGH == [0, 1, 2, 3, 4, 5]
+        assert len(fb.OPEN_STRINGS) == 6
+    with use_tuning('dadgad'):
+        assert fb.STRING_NOTES == ['D', 'A', 'D', 'G', 'A', 'D']
+    with use_tuning('all_E'):
+        assert fb.STRING_NOTES == ['E', 'E', 'E', 'E', 'e', 'e']
+
+
+def test_tuning_label_uses_display_letters():
+    """tuning_label() joins STRING_NOTES (display letters, duplicates allowed)."""
+    with use_tuning('drop_d'):
+        assert tuning_label() == 'DADGBe'
+    with use_tuning('dadgad'):
+        assert tuning_label() == 'DADGAD'
+    with use_tuning('all_E'):
+        assert tuning_label() == 'EEEEee'
+
+
+def test_duplicate_letter_tuning_diagram_round_trips():
+    """A diagram rendered under a duplicate-letter tuning still parses,
+    verifies, and decorates correctly."""
+    import fretboard as fb
+    with use_tuning('drop_d'):
+        d = generate_and_render('D', 'natural_minor')
+        assert 'Tuning: DADGBe' in d
+        # parse_diagram returns positions (0..5); all valid
+        positions = {pos for pos, _f, _c in parse_diagram(d)}
+        assert positions <= {0, 1, 2, 3, 4, 5}, positions
+        assert verify(d, 'D', 'natural_minor')
+        # decorate adds drone labels; both D strings should read D(1)
+        dec = fb.decorate(d, 'D', 'natural_minor')
+        assert dec.count('D(1)') >= 2
+
+
+def test_letter_resolution_in_unique_and_ambiguous_tunings():
+    """A unique letter resolves to its position; an ambiguous letter raises."""
+    import fretboard as fb
+    # Guitar EADGBe: all letters unique
+    assert fb._to_pos('E') == 0
+    assert fb._to_pos('e') == 5
+    assert fb._to_pos(2) == 2  # int passes through
+    # drop_d: 'D' is ambiguous
+    with use_tuning('drop_d'):
+        try:
+            fb._to_pos('D')
+        except ValueError as e:
+            assert 'ambiguous' in str(e)
+        else:
+            raise AssertionError("expected ValueError for ambiguous letter 'D'")
+        # 'A', 'G', 'B', 'e' still resolve (unique in drop_d)
+        assert fb._to_pos('A') == 1
+        # ints always work
+        assert fb._to_pos(0) == 0
+        assert fb._to_pos(2) == 2
 
 
 if __name__ == '__main__':

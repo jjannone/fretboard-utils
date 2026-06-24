@@ -29,20 +29,18 @@ from contextlib import contextmanager
 # Constants
 # ---------------------------------------------------------------------------
 
-# Open string pitch classes (0=C, 1=C#, ..., 11=B)
-OPEN_STRINGS = {
-    'E': 4,   # low E
-    'A': 9,
-    'D': 2,
-    'G': 7,
-    'B': 11,
-    'e': 4,   # high e
-}
+# Strings are identified by integer POSITION (0 = lowest, N-1 = highest).
+# STRING_NOTES gives the display letter at each position (duplicates allowed,
+# since duplicates are common in real tunings: drop-D's two D's, DADGAD's
+# three D's, all-E's six E's). OPEN_STRINGS and OPEN_MIDI are parallel
+# position-indexed lists giving pitch class and absolute MIDI number.
+STRING_NOTES = ['E', 'A', 'D', 'G', 'B', 'e']           # display letters
+OPEN_STRINGS = [4, 9, 2, 7, 11, 4]                       # pitch classes
 
 NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 
-STRING_ORDER_LOW_TO_HIGH = ['E', 'A', 'D', 'G', 'B', 'e']
-STRING_ORDER_DISPLAY = ['e', 'B', 'G', 'D', 'A', 'E']  # high to low for rendering
+STRING_ORDER_LOW_TO_HIGH = [0, 1, 2, 3, 4, 5]            # positions
+STRING_ORDER_DISPLAY = [5, 4, 3, 2, 1, 0]                # positions, high to low
 
 # Maximum semitone distance between adjacent fingered notes on one string.
 # Default is a minor 3rd (3 semitones) — wider than this is hard to reach
@@ -102,10 +100,99 @@ SCALES = {
     'double_harmonic':    [0, 1, 4, 5, 7, 8, 11],   # Byzantine / Hijaz
     'persian':            [0, 1, 4, 5, 6, 8, 11],
     'enigmatic':          [0, 1, 4, 6, 8, 10, 11],
-    # Pentatonic
-    'major_pentatonic':   [0, 2, 4, 7, 9],
-    'minor_pentatonic':   [0, 3, 5, 7, 10],
-    'blues_minor':        [0, 3, 5, 6, 7, 10],
+    # Extra exotic 7-note
+    'hungarian_major':    [0, 3, 4, 6, 7, 9, 10],   # also "Romanian major"
+    'romanian_minor':     [0, 2, 3, 6, 7, 9, 10],   # = Ukrainian Dorian / Misheberach / Nikriz
+    'algerian':           [0, 2, 3, 5, 6, 7, 8, 11],  # 8-note Algerian
+    # Arabic maqamat (12-TET approximations; the originals use quartertones,
+    # so several maqamat reduce to the same 12-TET interval set as a familiar
+    # Western mode — kept under both names for cross-referenced searching).
+    'maqam_hijaz':        [0, 1, 4, 5, 7, 8, 10],   # = phrygian dominant
+    'maqam_hijaz_kar':    [0, 1, 4, 5, 7, 8, 11],   # = double harmonic
+    'maqam_bayati':       [0, 1, 3, 5, 7, 8, 10],   # 12-TET approx = phrygian
+    'maqam_rast':         [0, 2, 4, 5, 7, 9, 11],   # 12-TET approx = major
+    'maqam_kurd':         [0, 1, 3, 5, 7, 8, 10],   # = phrygian
+    'maqam_nahawand':     [0, 2, 3, 5, 7, 8, 10],   # = natural minor
+    'maqam_saba':         [0, 1, 3, 4, 6, 8, 10],   # 12-TET approx = altered (super-locrian)
+    'maqam_nikriz':       [0, 2, 3, 6, 7, 9, 10],   # = ukrainian dorian
+    # Hindustani ragas (a sampler; many are renamings of Western modes)
+    'raga_bhairav':       [0, 1, 4, 5, 7, 8, 11],   # = double harmonic
+    'raga_yaman':         [0, 2, 4, 6, 7, 9, 11],   # = lydian
+    'raga_bhairavi':      [0, 1, 3, 5, 7, 8, 10],   # = phrygian
+    'raga_asavari':       [0, 2, 3, 5, 7, 8, 10],   # = natural minor
+    'raga_todi':          [0, 1, 3, 6, 7, 8, 11],   # exotic 7-note (Hindustani Todi)
+    'raga_marwa':         [0, 1, 4, 6, 9, 11],      # 6-note hexatonic, no 5
+    'raga_purvi':         [0, 1, 4, 6, 7, 8, 11],
+    'raga_malkauns':      [0, 3, 5, 8, 10],         # pentatonic (= Man Gong)
+    'raga_megh':          [0, 2, 5, 7, 10],         # pentatonic (= Egyptian/Suspended)
+    'raga_darbari':       [0, 2, 3, 5, 7, 8, 10],   # = natural minor (in raga context)
+    'raga_bageshri':      [0, 2, 3, 5, 7, 9, 10],   # = dorian
+    'raga_hindol':        [0, 4, 6, 7, 11],         # 5-note: 1 3 #4 5 7
+    'raga_madhuvanti':    [0, 2, 3, 6, 7, 9, 11],   # 1 2 b3 #4 5 6 7
+
+    # --- Pentatonic (5 notes) ---
+    'major_pentatonic':   [0, 2, 4, 7, 9],          # = chinese Gong, raga Bhupali
+    'minor_pentatonic':   [0, 3, 5, 7, 10],         # = chinese Yu
+    'suspended_pentatonic': [0, 2, 5, 7, 10],       # Egyptian, also Chinese Shang
+    'man_gong':           [0, 3, 5, 8, 10],         # Chinese Jue/Chiao, = Malkauns / blues_major_pent
+    'ritsusen':           [0, 2, 5, 7, 9],          # Japanese yo / Chinese Zhi
+    'hirajoshi':          [0, 2, 3, 7, 8],          # Japanese
+    'in_sen':             [0, 1, 5, 7, 10],         # Japanese (also sakura ascending)
+    'iwato':              [0, 1, 5, 6, 10],         # Japanese
+    'kumoi':              [0, 2, 3, 7, 9],          # Japanese (also called hon_kumoi_joshi)
+    'akebono':            [0, 2, 3, 7, 8],          # Japanese
+    'pelog':              [0, 1, 3, 7, 8],          # Indonesian 5-note pelog reduction
+    'slendro':            [0, 2, 5, 7, 9],          # Indonesian (≈ ritsusen)
+    'balinese':           [0, 1, 3, 7, 8],          # 5-note (similar intervals to pelog)
+    'kokin_joshi':        [0, 1, 5, 7, 8],          # Japanese
+
+    # --- Ethiopian qenets (5 main qenets and their major/minor variants) ---
+    # Sources: Kebede (1971), Kimberlin, Powne, Shelemay. Spellings/intervals
+    # vary slightly between scholars; the most commonly cited interval sets
+    # are used here. All four qenets are pentatonic in their traditional form.
+    'ethiopian_tezeta_major': [0, 2, 4, 7, 9],      # = major pentatonic (Bhupali)
+    'ethiopian_tezeta_minor': [0, 2, 3, 7, 9],      # minor pent with M6
+    'ethiopian_bati_major':   [0, 4, 5, 7, 11],     # bright, lydian-fragmented
+    'ethiopian_bati_minor':   [0, 2, 5, 7, 9],      # = suspended pent / Shang
+    'ethiopian_ambassel':     [0, 1, 4, 5, 7],      # phrygian-leaning b2
+    'ethiopian_anchihoye':    [0, 4, 5, 6, 11],     # the "lament" qenet, tritone-rich
+    # Ethiopian regional / liturgical variants
+    'ethiopian_yematebela_wofe': [0, 2, 3, 7, 8],   # variant of tezeta minor
+    'ethiopian_geez':         [0, 4, 5, 7, 11],     # liturgical (Geez Orthodox), ≈ bati_major
+    'ethiopian_ezel':         [0, 1, 3, 5, 7, 8],   # liturgical
+    'ethiopian_araray':       [0, 2, 4, 5, 7, 9, 11],  # liturgical (≈ ionian)
+
+    # --- Hexatonic (6 notes) ---
+    # whole_tone, augmented and blues_minor are above with the symmetricals
+    'blues_major':        [0, 2, 3, 4, 7, 9],       # major blues hexatonic — major pent + ♭3 blue note
+    'prometheus':         [0, 2, 4, 6, 9, 10],      # Scriabin's mystic (with #4)
+    'tritone_hex':        [0, 1, 4, 6, 7, 10],      # Petrushka / Stravinsky
+    'two_semitone_tritone': [0, 1, 2, 6, 7, 8],     # 2-2-2 tritone-pair
+    'istrian':            [0, 1, 3, 4, 6, 7],       # Croatian folk
+    'phrygian_hex':       [0, 1, 3, 5, 7, 10],      # phrygian minus the b6
+    'mixolydian_hex':     [0, 2, 4, 5, 7, 10],      # mixolydian minus the 6
+    'lydian_hex':         [0, 2, 4, 6, 7, 11],      # lydian minus the 6
+
+    # --- Octatonic (8 notes) ---
+    # half_whole_dim and whole_half_dim above. Bebop scales add a chromatic
+    # passing tone to a 7-note parent for an 8-note scale.
+    'bebop_dominant':     [0, 2, 4, 5, 7, 9, 10, 11],   # mixolydian + nat7
+    'bebop_major':        [0, 2, 4, 5, 7, 8, 9, 11],    # ionian + b6
+    'bebop_dorian':       [0, 2, 3, 4, 5, 7, 9, 10],    # dorian + nat3
+    'bebop_melodic_minor':[0, 2, 3, 5, 7, 8, 9, 11],    # mel min + b6 (also "bebop harmonic minor")
+    'spanish_8note':      [0, 1, 3, 4, 5, 6, 8, 10],    # phrygian dom + nat3
+    # --- Other unusual / 9-note / chromatic blends ---
+    'major_blues_9':      [0, 2, 3, 4, 5, 7, 9, 10, 11],  # blended blues
+    'oriental':           [0, 1, 4, 5, 6, 9, 10],          # 1 b2 3 4 b5 6 b7
+    'jewish_ahava_raba':  [0, 1, 4, 5, 7, 8, 10],         # = phrygian dominant (klezmer name)
+    'super_locrian_bb7':  [0, 1, 3, 4, 6, 8, 9],          # bb7 altered
+    'lydian_minor':       [0, 2, 4, 6, 7, 8, 10],         # lydian b6
+    'lydian_aug':         [0, 2, 4, 6, 8, 9, 11],         # lydian #5
+    'locrian_nat6':       [0, 1, 3, 5, 6, 9, 10],
+    'mixolydian_b6':      [0, 2, 4, 5, 7, 8, 10],
+    'dorian_b2':          [0, 1, 3, 5, 7, 9, 10],         # 2nd mode of melodic minor
+    'ionian_sharp5':      [0, 2, 4, 5, 8, 9, 11],         # 3rd mode of harmonic minor (Ionian #5)
+    'dorian_sharp4':      [0, 2, 3, 6, 7, 9, 10],         # 4th mode of harmonic minor (Ukrainian)
 }
 
 
@@ -123,21 +210,65 @@ def scale_pitches(root_name: str, scale_name: str) -> set:
     return {(root + i) % 12 for i in SCALES[scale_name]}
 
 
-def pitch_at(string_name: str, fret: int) -> int:
+def _to_pos(string) -> int:
+    """Resolve a string identifier to an integer position (0..N-1).
+
+    Accepts an int position directly, or a display letter — but a letter is
+    only resolvable when it appears exactly once in the active tuning. In
+    a duplicate-letter tuning (drop-D, DADGAD, all-E, ...), pass an int
+    position instead.
+    """
+    if isinstance(string, int):
+        return string
+    positions = [i for i, n in enumerate(STRING_NOTES) if n == string]
+    if len(positions) == 1:
+        return positions[0]
+    if not positions:
+        raise ValueError(
+            f"String letter {string!r} not present in tuning "
+            f"{tuning_label()}"
+        )
+    raise ValueError(
+        f"String letter {string!r} is ambiguous in tuning {tuning_label()} "
+        f"(appears at positions {positions}); pass an int position instead "
+        f"(0 = lowest, {len(STRING_NOTES) - 1} = highest)"
+    )
+
+
+def _normalize_string_configs(string_configs):
+    """Convert a string_configs dict to int-keyed form. Accepts either int
+    position keys or display-letter keys (letters must be unambiguous in the
+    active tuning). Returns None unchanged; never mutates input."""
+    if string_configs is None:
+        return None
+    out = {}
+    for k, v in string_configs.items():
+        out[_to_pos(k)] = v
+    return out
+
+
+def tuning_label() -> str:
+    """Return a short string identifying the active tuning, e.g. 'EADGBe'
+    for guitar, 'BEADGC' for bass_6, 'DADGBe' for drop-D, 'EEEEee' for
+    all-E. Duplicate letters appear once per position they occur at."""
+    return ''.join(STRING_NOTES)
+
+
+def pitch_at(string, fret: int) -> int:
     """Return pitch class (0-11) at the given string and fret."""
-    return (OPEN_STRINGS[string_name] + fret) % 12
+    return (OPEN_STRINGS[_to_pos(string)] + fret) % 12
 
 
-def note_name(string_name: str, fret: int) -> str:
+def note_name(string, fret: int) -> str:
     """Return pitch name (e.g., 'F#') at the given string and fret."""
-    return NOTE_NAMES[pitch_at(string_name, fret)]
+    return NOTE_NAMES[pitch_at(string, fret)]
 
 
 # ---------------------------------------------------------------------------
 # Diagram parsing & rendering
 # ---------------------------------------------------------------------------
 
-DIAGRAM_LINE_RE = re.compile(r'^([EADGBe])([|0-9Xx]?)(.*?)\|?$')
+DIAGRAM_LINE_RE = re.compile(r'^\s*([EADGBe])([|0-9Xx]?)(.*?)\|?$')
 
 
 def parse_diagram(diagram: str):
@@ -168,16 +299,20 @@ def parse_diagram(diagram: str):
         if cfg.isdigit() and cfg != '0':
             shift = max(shift, int(cfg))
 
-    # Pass 2: extract notes, mapping column k to fret (k + shift).
+    # Pass 2: extract notes. Each matched line's POSITION is determined by
+    # its index in STRING_ORDER_DISPLAY (high to low), so duplicate display
+    # letters in the tuning don't introduce ambiguity.
     notes = []
-    for m in raw_lines:
-        string_name = m.group(1)
+    for idx, m in enumerate(raw_lines):
+        if idx >= len(STRING_ORDER_DISPLAY):
+            break
+        pos = STRING_ORDER_DISPLAY[idx]
         body = m.group(3)
         for i, ch in enumerate(body):
             if ch == '|':
                 break
             if ch.isdigit():
-                notes.append((string_name, i + shift, i))
+                notes.append((pos, i + shift, i))
     return notes
 
 
@@ -210,10 +345,13 @@ def verify(diagram: str, root_name: str, scale_name: str,
 # Generator
 # ---------------------------------------------------------------------------
 
-def frets_in_scale(string_name: str, pitches: set,
+def frets_in_scale(string, pitches: set,
                    fret_min: int = 3, fret_max: int = 22,
                    capo_fret: int = None):
     """All frets on this string that play a pitch in the scale.
+
+    `string` is a position (int 0..N-1) or a display letter resolvable in
+    the active tuning.
 
     capo_fret: if given, only frets above the capo are searched. The capo
     tone itself is always ringing as a drone and is shown in the prefix,
@@ -224,7 +362,8 @@ def frets_in_scale(string_name: str, pitches: set,
     max(capo_fret + 1, fret_min). This lets a higher spider-capo bar set
     a global lower bound on body frets across all strings.
     """
-    open_pc = OPEN_STRINGS[string_name]
+    pos = _to_pos(string)
+    open_pc = OPEN_STRINGS[pos]
     if capo_fret is not None:
         if capo_fret == 0:
             low = 0
@@ -244,22 +383,20 @@ def _max_capo(string_configs: dict) -> int:
                 if isinstance(v, int) and v > 0), default=0)
 
 
-def _drone_pc(string_name: str, string_configs: dict):
-    """Pitch class of the always-sounding drone on a string.
+def _drone_pc(string, string_configs: dict):
+    """Pitch class of the always-sounding drone on a string (position int).
 
-    - capo at fret N (val=N>0)   → (open + N) % 12
-    - explicit open (val=0)      → open
-    - default (no entry)         → open string drones at fret 0
-    - 'X' / '|' / None           → no drone (string is muted, fretted-only,
-                                    or excluded), returns None.
+    string_configs must be int-keyed (position) — callers should normalize
+    via _normalize_string_configs() at their public boundary.
     """
-    if string_configs and string_name in string_configs:
-        val = string_configs[string_name]
+    pos = _to_pos(string)
+    if string_configs and pos in string_configs:
+        val = string_configs[pos]
         if val is None or val == 'X' or val == '|':
             return None
         if isinstance(val, int):
-            return (OPEN_STRINGS[string_name] + val) % 12
-    return OPEN_STRINGS[string_name] % 12
+            return (OPEN_STRINGS[pos] + val) % 12
+    return OPEN_STRINGS[pos] % 12
 
 
 def _effective_fret_min(string_configs: dict, base_min: int = 3) -> int:
@@ -457,43 +594,41 @@ def capo_summary(string_configs: dict) -> str:
        'capo 1 on A,G (→A♯,G♯); capo 4 on B (→D♯)'.
        Returns 'no capo' when there are no spider capos.
     """
-    if not string_configs:
+    cfg = _normalize_string_configs(string_configs)
+    if not cfg:
         return 'no capo'
     by_fret = {}
-    for s, v in string_configs.items():
+    for pos, v in cfg.items():
         if isinstance(v, int) and v > 0:
-            by_fret.setdefault(v, []).append(s)
+            by_fret.setdefault(v, []).append(pos)
     if not by_fret:
         return 'no capo'
     parts = []
     for fret in sorted(by_fret):
-        strings = by_fret[fret]
-        notes = [NOTE_NAMES[(OPEN_STRINGS[s] + fret) % 12] for s in strings]
-        # Replace ASCII '#' with '♯' for display
+        positions = by_fret[fret]
+        letters = [STRING_NOTES[p] for p in positions]
+        notes = [NOTE_NAMES[(OPEN_STRINGS[p] + fret) % 12] for p in positions]
         notes = [n.replace('#', '♯') for n in notes]
-        parts.append(f"capo {fret} on {','.join(strings)} (→{','.join(notes)})")
+        parts.append(f"capo {fret} on {','.join(letters)} (→{','.join(notes)})")
     return '; '.join(parts)
 
 
-def drone_label(string_name: str, string_configs: dict,
+def drone_label(string, string_configs: dict,
                 root_name: str, scale_name: str) -> str:
     """Return a label like 'G#(1)', 'D(♯4)', 'C#(4)' for the drone note on a
     string, annotated with its interval from the root.
 
-    The role is the chromatic interval from the root, spelled via DEGREE_LABEL
-    (1, ♭2, 2, ♭3, 3, 4, ♯4, 5, ♯5, 6, ♭7, 7). Because every semitone has a
-    fixed label this works for any scale — including the 8-note diminished
-    scales and the 12-note chromatic scale — with no ordinal-numeral overflow,
-    and an out-of-scale drone simply reads as its own chromatic degree.
-    For X (muted) strings, the implicit open-string drone is used.
+    `string` is a position (int) or display letter (when unambiguous).
+    `string_configs` is int-keyed by position (or letter-keyed via
+    `_normalize_string_configs`).
 
-    scale_name is retained for signature stability (the interval label does not
-    depend on the scale).
+    For X (muted) strings, the implicit open-string drone is used.
     """
-    drone = _drone_pc(string_name, string_configs)
-    open_pc = OPEN_STRINGS[string_name]
-    is_muted = (string_configs and string_name in string_configs and
-                string_configs[string_name] == 'X')
+    pos = _to_pos(string)
+    cfg = _normalize_string_configs(string_configs)
+    drone = _drone_pc(pos, cfg)
+    open_pc = OPEN_STRINGS[pos]
+    is_muted = (cfg and pos in cfg and cfg[pos] == 'X')
     if drone is None:
         if is_muted:
             drone = open_pc % 12
@@ -560,28 +695,27 @@ _CHORD_TYPE_NAMES = {
 }
 
 
-def per_string_chord(string_name: str, body_frets: list,
+def per_string_chord(string, body_frets: list,
                      string_configs: dict = None) -> str:
     """Return a chord label like 'EΔ7 (157)' for drone + body notes on a string.
 
-    Recognises **triads and 7th chords only** (including their dyad fragments
-    when the 5th is implied). Dominant 7s are labelled `7`; major 7s use `Δ7`.
-    Anything outside this set — 6th chords, add9, slash chords, clusters —
-    falls back to a `Drone?` label with the raw degree list. The user's rule:
-    "triads and 7th chords" only.
+    `string` is a position (int) or display letter. Recognises **triads and
+    7th chords only**; anything else falls back to a `Drone?` label with the
+    raw degree list.
 
     For X-muted strings the implicit open-string pitch is still treated as the
-    notional root, since the player would otherwise hear it.
+    notional root.
     """
-    drone = _drone_pc(string_name, string_configs)
-    is_muted = (string_configs and string_name in string_configs and
-                string_configs[string_name] == 'X')
+    pos = _to_pos(string)
+    cfg = _normalize_string_configs(string_configs)
+    drone = _drone_pc(pos, cfg)
+    is_muted = (cfg and pos in cfg and cfg[pos] == 'X')
     if drone is None and is_muted:
-        drone = OPEN_STRINGS[string_name] % 12
+        drone = OPEN_STRINGS[pos] % 12
     if drone is None:
         return '—'
 
-    open_pc = OPEN_STRINGS[string_name]
+    open_pc = OPEN_STRINGS[pos]
     body_pcs = [(open_pc + f) % 12 for f in body_frets]
     pcs = sorted(set([drone, *body_pcs]), key=lambda p: (p - drone) % 12)
     intervals = tuple((p - drone) % 12 for p in pcs)
@@ -607,30 +741,34 @@ def decorate(diagram: str, root_name: str, scale_name: str,
     `parse_diagram` because the leading string letter is replaced. Always run
     `verify` (or any parse-based check) on the raw diagram BEFORE decorating.
     """
-    drone_labels = {s: drone_label(s, string_configs, root_name, scale_name)
-                    for s in STRING_ORDER_DISPLAY}
+    cfg = _normalize_string_configs(string_configs)
+    drone_labels = {pos: drone_label(pos, cfg, root_name, scale_name)
+                    for pos in STRING_ORDER_DISPLAY}
     label_width = max(len(lbl) for lbl in drone_labels.values()) + 2
 
     notes_by_string = {}
     if with_chords:
-        for s, fret, _col in parse_diagram(diagram):
-            notes_by_string.setdefault(s, []).append(fret)
-        chord_labels = {s: per_string_chord(s, notes_by_string.get(s, []),
-                                             string_configs)
-                        for s in STRING_ORDER_DISPLAY}
+        for pos, fret, _col in parse_diagram(diagram):
+            notes_by_string.setdefault(pos, []).append(fret)
+        chord_labels = {pos: per_string_chord(pos, notes_by_string.get(pos, []), cfg)
+                        for pos in STRING_ORDER_DISPLAY}
         chord_width = max(len(c) for c in chord_labels.values())
 
     out_lines = []
+    matched_idx = 0
     for line in diagram.split('\n'):
         if not line:
             continue
-        if line[0] in OPEN_STRINGS:
-            s = line[0]
-            config = line[1]
-            rest = line[2:]  # body + closing | (and any embedded label)
-            new_line = f"{drone_labels[s]:<{label_width}}{config}{rest}"
+        m = DIAGRAM_LINE_RE.match(line)
+        if m and matched_idx < len(STRING_ORDER_DISPLAY):
+            pos = STRING_ORDER_DISPLAY[matched_idx]
+            matched_idx += 1
+            config = m.group(2)
+            body_offset = m.start(3)
+            rest = line[body_offset:]
+            new_line = f"{drone_labels[pos]:<{label_width}}{config}{rest}"
             if with_chords:
-                new_line += f"  {chord_labels[s]:<{chord_width}}"
+                new_line += f"  {chord_labels[pos]:<{chord_width}}"
             out_lines.append(new_line)
         else:
             out_lines.append(line)
@@ -680,45 +818,140 @@ def _build_stretch_profiles(order):
 STRETCH_PROFILES = _build_stretch_profiles(STRING_ORDER_LOW_TO_HIGH)
 
 
-# Instrument tunings: (low-to-high string order, {string letter: open pitch class}).
-# 'guitar' is the module default; 'bass_6' is a 6-string bass tuned BEADGC.
+# Instrument tunings. 'letters' is the display sequence (low to high),
+# with duplicates allowed (drop-D's two D's, all-E's six E's, etc.).
+# 'pcs' and 'midi' are position-indexed parallel lists giving the pitch
+# class and absolute MIDI number of each open string. Strings are
+# identified internally by integer position; letters are display only.
 _TUNING_PRESETS = {
-    'guitar': (['E', 'A', 'D', 'G', 'B', 'e'],
-               {'E': 4, 'A': 9, 'D': 2, 'G': 7, 'B': 11, 'e': 4}),
-    'bass_6': (['B', 'E', 'A', 'D', 'G', 'C'],
-               {'B': 11, 'E': 4, 'A': 9, 'D': 2, 'G': 7, 'C': 0}),
+    'guitar': {
+        'letters': ['E', 'A', 'D', 'G', 'B', 'e'],
+        'pcs':     [4, 9, 2, 7, 11, 4],
+        'midi':    [40, 45, 50, 55, 59, 64],
+    },
+    'bass_6': {
+        'letters': ['B', 'E', 'A', 'D', 'G', 'C'],
+        'pcs':     [11, 4, 9, 2, 7, 0],
+        'midi':    [23, 28, 33, 38, 43, 48],
+    },
+    # All-fourths guitar (EADGCF): the natural M3 between G and B is
+    # straightened to a P4 by tuning B up to C and high-e up to F.
+    'guitar_fourths': {
+        'letters': ['E', 'A', 'D', 'G', 'C', 'F'],
+        'pcs':     [4, 9, 2, 7, 0, 5],
+        'midi':    [40, 45, 50, 55, 60, 65],
+    },
+    # All-fifths (CGDAEB): every string a P5 above the previous.
+    'guitar_fifths': {
+        'letters': ['C', 'G', 'D', 'A', 'E', 'B'],
+        'pcs':     [0, 7, 2, 9, 4, 11],
+        'midi':    [36, 43, 50, 57, 64, 71],
+    },
+    # Drop D (DADGBe) — two D's: D1 (low) and D2 (third string).
+    'drop_d': {
+        'letters': ['D', 'A', 'D', 'G', 'B', 'e'],
+        'pcs':     [2, 9, 2, 7, 11, 4],
+        'midi':    [38, 45, 50, 55, 59, 64],
+    },
+    # DADGAD — three D's, two A's. Becomes ['D1','A1','D2','G','A2','D3'].
+    'dadgad': {
+        'letters': ['D', 'A', 'D', 'G', 'A', 'D'],
+        'pcs':     [2, 9, 2, 7, 9, 2],
+        'midi':    [38, 45, 50, 55, 57, 62],
+    },
+    # All-E party trick: four bottom E's spread across octaves, two top e's.
+    'all_E': {
+        'letters': ['E', 'E', 'E', 'E', 'e', 'e'],
+        'pcs':     [4, 4, 4, 4, 4, 4],
+        'midi':    [16, 28, 40, 52, 64, 76],
+    },
 }
+
+
+OPEN_MIDI = [40, 45, 50, 55, 59, 64]  # position-indexed, parallel to STRING_NOTES
+
+
+# Hand-curated favorite spider-capo configurations. Each entry pairs a
+# tuning with a specific capo placement and the scales it sounds good
+# under, so they can be recalled by name later. Add new entries here;
+# users retrieve via `favorite_capo(name)`.
+FAVORITE_CAPOS = {
+    # All-fourths (EADGCF) with capos `1 1 0 2 2 0` (low-to-high). Drones
+    # spell F A♯ D A D F — a D minor triad with an added ♭6 (Bb), or
+    # equivalently an F6 voicing. Works under D natural minor, D phrygian,
+    # F major, or G dorian; the b6 colour pulls toward modal-minor.
+    'fourths_dm_b6_drone': {
+        'tuning': 'guitar_fourths',
+        'pattern': '1 1 0 2 2 0',
+        'string_configs': {0: 1, 1: 1, 3: 2, 4: 2},
+        'drones': 'F A# D A D F',
+        'feel': 'D minor + ♭6 / F major drone',
+        'scales': [('D', 'natural_minor'), ('D', 'phrygian'),
+                   ('F', 'major'), ('G', 'dorian')],
+    },
+    # All-fourths (EADGCF) with capos `0 2 0 1 1 2` (low-to-high). Drones
+    # spell E B D G♯ C♯ G — six distinct pitches covering 6 of the 7 tones
+    # of E hungarian major (1 ♭3 3 ♯4 5 6 ♭7), missing only the ♯4 (A♯)
+    # which becomes the diagnostic melodic target. The simultaneous ♭3
+    # (G) and 3 (G♯) in the drone are the gypsy/hungarian-major fingerprint.
+    'fourths_e_hungarian_major': {
+        'tuning': 'guitar_fourths',
+        'pattern': '0 2 0 1 1 2',
+        'string_configs': {1: 2, 3: 1, 4: 1, 5: 2},
+        'drones': 'E B D G# C# G',
+        'feel': 'E Hungarian major drone (♭3 alongside 3 — gypsy colour)',
+        'scales': [('E', 'hungarian_major'), ('E', 'hungarian_minor'),
+                   ('E', 'phrygian_dominant')],
+    },
+}
+
+
+def favorite_capo(name: str) -> dict:
+    """Look up a hand-curated favorite spider-capo configuration by name.
+    Returns the entry's dict (with 'tuning', 'string_configs', 'scales' …)
+    or raises KeyError. Use list(FAVORITE_CAPOS) to see all names."""
+    return FAVORITE_CAPOS[name]
 
 
 @contextmanager
 def use_tuning(name: str):
     """Temporarily switch the active instrument tuning for generation/rendering.
 
-    Rebinds the module-level tuning globals (OPEN_STRINGS, the two string
-    orders, the diagram line regex, and STRETCH_PROFILES) for the duration of
-    the with-block, then restores them. The module default is 6-string guitar,
-    so existing callers are unaffected.
+    Rebinds the module-level tuning globals (STRING_NOTES, OPEN_STRINGS,
+    OPEN_MIDI, the two string orders, the diagram line regex, and
+    STRETCH_PROFILES) for the duration of the with-block, then restores them.
+    The module default is 6-string guitar (EADGBe).
 
-    Presets: 'guitar' (EADGBe) and 'bass_6' (BEADGC, low B to high C). Inside
-    the block, the "root on the lowest string" constraint targets that tuning's
-    lowest string (B for bass, E for guitar).
+    Strings are identified by integer position (0 = lowest, N-1 = highest).
+    Display letters in `STRING_NOTES` may repeat (drop-D's two D's, all-E's
+    six E's). For unambiguous-letter tunings, helpers will resolve a letter
+    argument to the matching position; for tunings with duplicate letters,
+    pass an int position.
     """
-    global OPEN_STRINGS, STRING_ORDER_LOW_TO_HIGH, STRING_ORDER_DISPLAY
+    global STRING_NOTES, OPEN_STRINGS, OPEN_MIDI
+    global STRING_ORDER_LOW_TO_HIGH, STRING_ORDER_DISPLAY
     global DIAGRAM_LINE_RE, STRETCH_PROFILES
     if name not in _TUNING_PRESETS:
         raise ValueError(f"Unknown tuning {name!r}; known: {list(_TUNING_PRESETS)}")
-    saved = (OPEN_STRINGS, STRING_ORDER_LOW_TO_HIGH, STRING_ORDER_DISPLAY,
+    saved = (STRING_NOTES, OPEN_STRINGS, OPEN_MIDI,
+             STRING_ORDER_LOW_TO_HIGH, STRING_ORDER_DISPLAY,
              DIAGRAM_LINE_RE, STRETCH_PROFILES)
-    order, opens = _TUNING_PRESETS[name]
-    OPEN_STRINGS = dict(opens)
-    STRING_ORDER_LOW_TO_HIGH = list(order)
-    STRING_ORDER_DISPLAY = list(reversed(order))
-    DIAGRAM_LINE_RE = re.compile(rf"^([{''.join(order)}])([|0-9Xx]?)(.*?)\|?$")
-    STRETCH_PROFILES = _build_stretch_profiles(order)
+    preset = _TUNING_PRESETS[name]
+    STRING_NOTES = list(preset['letters'])
+    OPEN_STRINGS = list(preset['pcs'])
+    OPEN_MIDI = list(preset['midi'])
+    STRING_ORDER_LOW_TO_HIGH = list(range(len(STRING_NOTES)))
+    STRING_ORDER_DISPLAY = list(reversed(STRING_ORDER_LOW_TO_HIGH))
+    unique_letters = ''.join(sorted(set(STRING_NOTES)))
+    DIAGRAM_LINE_RE = re.compile(
+        rf"^\s*([{re.escape(unique_letters)}])([|0-9Xx]?)(.*?)\|?$"
+    )
+    STRETCH_PROFILES = _build_stretch_profiles(STRING_ORDER_LOW_TO_HIGH)
     try:
         yield
     finally:
-        (OPEN_STRINGS, STRING_ORDER_LOW_TO_HIGH, STRING_ORDER_DISPLAY,
+        (STRING_NOTES, OPEN_STRINGS, OPEN_MIDI,
+         STRING_ORDER_LOW_TO_HIGH, STRING_ORDER_DISPLAY,
          DIAGRAM_LINE_RE, STRETCH_PROFILES) = saved
 
 
@@ -770,6 +1003,7 @@ def generate_2nps(root_name: str, scale_name: str, start_fret: int = 3,
         max_stretch = cap
     if pitches is None:
         pitches = scale_pitches(root_name, scale_name)
+    string_configs = _normalize_string_configs(string_configs)
     root_pc = NOTE_NAMES.index(root_name)
     fret_floor = _effective_fret_min(string_configs)
     pattern = {}
@@ -873,6 +1107,7 @@ def generate_3nps(root_name: str, scale_name: str, start_fret: int = 3,
     The highest spider-capo bar sets a global floor on body frets across all
     strings; the bar physically blocks fretting at or below that fret.
     """
+    string_configs = _normalize_string_configs(string_configs)
     cap = effective_finger_step(scale_name)
     if max_step is None:
         max_step = cap
@@ -982,6 +1217,7 @@ def generate_arpeggio(root_name: str, scale_name: str, start_fret: int = 3,
     if max_stretch is None:
         max_stretch = effective_finger_step(scale_name)
     pitches = scale_pitches(root_name, scale_name)
+    string_configs = _normalize_string_configs(string_configs)
     root_pc = NOTE_NAMES.index(root_name)
     fret_floor = _effective_fret_min(string_configs)
     pattern = {}
@@ -1114,8 +1350,319 @@ def generate_arpeggio(root_name: str, scale_name: str, start_fret: int = 3,
     return pattern
 
 
+def find_cluster_drones(root_name: str, scale_name: str, *,
+                        max_capo: int = 4, max_distinct_capos: int = 2):
+    """Search spider-capo configurations whose six open/capo drones form a
+    contiguous block of scale tones — a 'cluster of seconds' chord voicing.
+
+    Each string's drone is open_pitch + capo_fret (with capo_fret in
+    0..max_capo). The set of six drone pitch classes must be six adjacent
+    scale-degrees (the scale is treated as a cyclic ladder, so blocks may
+    wrap through the octave). With max_capo=4 and standard tunings, a
+    strict ascending stepwise run across all six strings is mathematically
+    impossible (the capo budget can't compress the open-string fourths
+    down to seconds across five jumps), but the six drones can still form
+    a stacked-seconds *chord* when strummed -- just not in stepwise order.
+
+    Returns a list of dicts, ranked best-first:
+      - 'string_configs': {string_letter: fret, ...}  (nonzero capos only)
+      - 'drone_pcs':      [pc, ...]  six pitch classes in string order, low to high
+      - 'drones_midi':    [midi, ...]  absolute pitches in string order
+      - 'capo_frets':     sorted list of distinct nonzero capo frets used
+      - 'top_capo':       highest capo fret in the config
+      - 'ascending':      True iff drones strictly ascend across strings
+    """
+    import itertools as _it
+    scale_pcs = sorted(scale_pitches(root_name, scale_name))
+    n_scale = len(scale_pcs)
+    if n_scale < 6:
+        return []
+    strings = list(STRING_ORDER_LOW_TO_HIGH)
+    blocks = {frozenset(scale_pcs[(start + k) % n_scale] for k in range(6))
+              for start in range(n_scale)}
+    out = []
+    seen = set()
+    for fret_tuple in _it.product(range(max_capo + 1), repeat=6):
+        distinct = {f for f in fret_tuple if f != 0}
+        if not distinct or len(distinct) > max_distinct_capos:
+            continue
+        drone_pcs = tuple((OPEN_STRINGS[s] + f) % 12
+                          for s, f in zip(strings, fret_tuple))
+        if len(set(drone_pcs)) != 6:
+            continue
+        if frozenset(drone_pcs) not in blocks:
+            continue
+        midis = tuple(OPEN_MIDI[s] + f for s, f in zip(strings, fret_tuple))
+        ascending = all(midis[i + 1] > midis[i] for i in range(5))
+        key = (frozenset(drone_pcs), tuple(sorted(distinct)))
+        if key in seen:
+            continue
+        seen.add(key)
+        cfg = {s: f for s, f in zip(strings, fret_tuple) if f != 0}
+        out.append({
+            'string_configs': cfg,
+            'drone_pcs': list(drone_pcs),
+            'drones_midi': list(midis),
+            'capo_frets': sorted(distinct),
+            'top_capo': max(distinct),
+            'ascending': ascending,
+        })
+    out.sort(key=lambda c: (not c['ascending'], len(c['capo_frets']), c['top_capo']))
+    return out
+
+
+def generate_cluster(root_name: str, scale_name: str, *,
+                     max_capo: int = 4, max_distinct_capos: int = 2,
+                     body_notes_per_string: int = 0,
+                     body_fret_min: int = None, body_fret_max: int = 22,
+                     choose: int = 0):
+    """Pick a cluster-of-seconds spider-capo configuration and (optionally)
+    add body notes that continue the scale upward from each drone.
+
+    body_notes_per_string=0 (default) yields a drones-only diagram: the capo
+    config is the entire idea. Any positive value adds that many fretted
+    in-scale notes per string, picked as the lowest reachable scale tones
+    above the string's drone (so the body extends the scalar run upward).
+
+    Returns (string_configs, pattern). Raises ValueError if no cluster found.
+    """
+    candidates = find_cluster_drones(root_name, scale_name,
+                                     max_capo=max_capo,
+                                     max_distinct_capos=max_distinct_capos)
+    if not candidates:
+        raise ValueError(
+            f"No cluster-drone configuration found for {root_name} {scale_name}"
+        )
+    info = candidates[choose if 0 <= choose < len(candidates) else 0]
+    string_configs = info['string_configs']
+    pitches = scale_pitches(root_name, scale_name)
+    if body_fret_min is None:
+        body_fret_min = _effective_fret_min(string_configs, base_min=3)
+    pattern = {}
+    for s in STRING_ORDER_LOW_TO_HIGH:
+        if body_notes_per_string <= 0:
+            pattern[s] = ()
+            continue
+        capo_f = string_configs.get(s, 0)
+        drone_midi = OPEN_MIDI[s] + capo_f
+        in_scale = frets_in_scale(s, pitches, body_fret_min, body_fret_max,
+                                  capo_fret=capo_f)
+        # The highest capo bar blocks every string at or below its fret, so
+        # uncapo'd strings still cannot use frets below body_fret_min.
+        in_scale = [f for f in in_scale if f >= body_fret_min]
+        above_drone = sorted(f for f in in_scale if OPEN_MIDI[s] + f > drone_midi)
+        pattern[s] = tuple(above_drone[:body_notes_per_string])
+    return string_configs, pattern
+
+
+def find_scalar_runs(root_name: str, scale_name: str, *,
+                     max_capo: int = 5, max_distinct_capos: int = 2,
+                     max_step: int = 2, allow_one_minor_third: bool = True,
+                     allow_one_wild_jump: bool = False,
+                     max_body_span: int = 7, fret_max: int = 22):
+    """Find ascending stepwise scalar runs across the upper five strings,
+    with the lowest string acting as a bass pedal beneath the run.
+
+    Each upper string (strings 2..6, low to high above the bass) contributes
+    either its open/capo drone or a single fretted in-scale note above the
+    capo bar. Adjacent upper-string pitches step by m2 or M2 (1 or 2
+    semitones); `allow_one_minor_third` permits one m3 (3-semitone) hop for
+    scales whose neighbouring tones are a minor third apart (harmonic minor
+    etc.).
+
+    `allow_one_wild_jump` (default False) further relaxes the run to allow
+    **one** step of any positive scale interval (M3, P4, P5, …) in addition
+    to (or in place of) the m3 allowance. The wild jump subsumes the m3
+    budget: if a config can be reached with a smaller wild jump, it will be;
+    the ranking still prefers no/smaller wild jumps. This option often
+    unlocks very tight (or zero-span) body fingerings on scales whose pure-
+    stepwise geometry is wider — at the cost of a non-stepwise leap
+    somewhere in the run.
+
+    The lowest string contributes any in-scale pitch ≤ the second string's
+    pitch (typically an octave below the run).
+
+    `max_body_span` caps the fret range of all body notes so the fingering
+    fits a holdable shape.
+
+    Returns a list of dicts, ranked best-first by:
+      1. Smaller body span (tighter hand position)
+      2. More drones used (fewer fingerings to fret)
+      3. Smaller wild-jump size (0 = no wild jump > m3 > M3 > P4 > …)
+      4. Fewer distinct capo frets
+      5. Lower top capo fret
+    Each result has 'string_configs', 'pattern', 'sequence_midi' (six
+    pitches, low to high), 'capo_frets', 'has_minor_third', 'wild_jump_size'
+    (0 if none, else the step in semitones), 'drones_used', 'body_span',
+    and 'bass_gap' (semitones from bass to string-2's pitch).
+    """
+    import itertools as _it
+    pitches = scale_pitches(root_name, scale_name)
+    strings = list(STRING_ORDER_LOW_TO_HIGH)
+    midi_low = min(OPEN_MIDI)
+    midi_high = max(OPEN_MIDI) + fret_max
+    # Five-tone ascending targets for the upper five strings. Walk by next
+    # in-scale tone; allow one step beyond `max_step` if budgets permit.
+    starts = [m for m in range(midi_low, midi_high + 1) if m % 12 in pitches]
+    targets = []  # list of (seq, has_m3, wild_jump_size)
+
+    def _walk(start):
+        # Iterative walk: at each step the next scale tone (if ≤ max_step)
+        # is taken; an exceeding step consumes the m3 or wild budget.
+        # With allow_one_wild_jump we DFS to explore multiple wild-jump
+        # placements per starting pitch.
+        def dfs(seq, m3_used, wild_size):
+            if len(seq) == 5:
+                targets.append((tuple(seq), m3_used, wild_size))
+                return
+            cur = seq[-1]
+            n = cur + 1
+            while n <= midi_high:
+                if n % 12 in pitches:
+                    step = n - cur
+                    if step <= max_step:
+                        dfs(seq + [n], m3_used, wild_size)
+                    elif step == 3 and allow_one_minor_third and not m3_used and wild_size == 0:
+                        dfs(seq + [n], True, 0)
+                    elif allow_one_wild_jump and wild_size == 0 and not m3_used:
+                        # One wild jump (any size > max_step). When wild jump is
+                        # spent the rest of the run must be stepwise.
+                        dfs(seq + [n], False, step)
+                n += 1
+        dfs([start], False, 0)
+
+    for s in starts:
+        _walk(s)
+    results = []
+    seen = set()
+    for fret_tuple in _it.product(range(max_capo + 1), repeat=6):
+        distinct = {f for f in fret_tuple if f != 0}
+        if len(distinct) > max_distinct_capos:
+            continue
+        capo_max = max(fret_tuple)
+        body_floor = capo_max + 1 if capo_max > 0 else 1
+        playable = []
+        for i, s in enumerate(strings):
+            opts = {}
+            drone = OPEN_MIDI[s] + fret_tuple[i]
+            if drone % 12 in pitches:
+                opts[drone] = (fret_tuple[i], True)
+            for f in range(max(body_floor, fret_tuple[i] + 1), fret_max + 1):
+                if (OPEN_STRINGS[s] + f) % 12 in pitches:
+                    m = OPEN_MIDI[s] + f
+                    opts.setdefault(m, (f, False))
+            playable.append(opts)
+        for tgt, has_m3, wild_size in targets:
+            choice_upper = []
+            ok = True
+            for i in range(5):
+                if tgt[i] in playable[i + 1]:
+                    choice_upper.append(playable[i + 1][tgt[i]])
+                else:
+                    ok = False
+                    break
+            if not ok:
+                continue
+            for low_midi, (low_fret, low_is_drone) in playable[0].items():
+                if low_midi > tgt[0]:
+                    continue
+                full = [(low_fret, low_is_drone)] + choice_upper
+                body_frets = [f for f, is_d in full if not is_d]
+                if body_frets:
+                    span = max(body_frets) - min(body_frets)
+                    if span > max_body_span:
+                        continue
+                else:
+                    span = 0
+                cfg = {s: f for s, f in zip(strings, fret_tuple) if f != 0}
+                pattern = {s: () for s in strings}
+                drones_used = 0
+                for s, (fret, is_drone) in zip(strings, full):
+                    if is_drone:
+                        drones_used += 1
+                    else:
+                        pattern[s] = (fret,)
+                full_seq = [low_midi] + list(tgt)
+                key = (tuple(full_seq), tuple(sorted(distinct)),
+                       tuple(c[0] for c in full))
+                if key in seen:
+                    continue
+                seen.add(key)
+                results.append({
+                    'string_configs': cfg,
+                    'pattern': pattern,
+                    'sequence_midi': full_seq,
+                    'capo_frets': sorted(distinct),
+                    'has_minor_third': has_m3,
+                    'wild_jump_size': wild_size,
+                    'drones_used': drones_used,
+                    'body_span': span,
+                    'bass_gap': tgt[0] - low_midi,
+                    'top_body': max(body_frets) if body_frets else 0,
+                })
+    results.sort(key=lambda r: (
+        r['body_span'],
+        -r['drones_used'],
+        r['wild_jump_size'],
+        r['has_minor_third'],
+        len(r['capo_frets']),
+        max(r['capo_frets']) if r['capo_frets'] else 0,
+        r['top_body'],
+    ))
+    return results
+
+
+def generate_scalar_run(root_name: str, scale_name: str, *,
+                        max_capo: int = 5, max_distinct_capos: int = 2,
+                        max_step: int = 2, allow_one_minor_third: bool = True,
+                        allow_one_wild_jump: bool = False,
+                        wild_jump_span_threshold: int = 3,
+                        max_body_span: int = 7,
+                        fret_max: int = 22, choose: int = 0):
+    """Pick a scalar-run capo + fingering combination. Returns
+    (string_configs, pattern). Raises ValueError if no run is found.
+
+    Default behaviour is *tiered*: first search with the m3 budget only
+    (no wild jump), and if the tightest result still has body_span greater
+    than `wild_jump_span_threshold` (default 3), retry with the wild jump
+    enabled and use whichever search yields the smaller span. The musical
+    rationale: an m3 hop is closer to stepwise motion than an arbitrary
+    leap, so prefer it when the geometry permits; only escalate when a
+    pure-m3 fingering exceeds a hand-friendly fret span.
+
+    Pass `wild_jump_span_threshold=None` to disable escalation entirely.
+    Pass `allow_one_wild_jump=True` to bypass tiering and always allow
+    wild jumps from the start (the caller's explicit override wins).
+    """
+    def _search(wild):
+        return find_scalar_runs(root_name, scale_name,
+                                max_capo=max_capo,
+                                max_distinct_capos=max_distinct_capos,
+                                max_step=max_step,
+                                allow_one_minor_third=allow_one_minor_third,
+                                allow_one_wild_jump=wild,
+                                max_body_span=max_body_span,
+                                fret_max=fret_max)
+    if allow_one_wild_jump:
+        cands = _search(True)
+    else:
+        cands = _search(False)
+        if wild_jump_span_threshold is not None and (
+                not cands or cands[0]['body_span'] > wild_jump_span_threshold):
+            wild_cands = _search(True)
+            if wild_cands and (not cands
+                               or wild_cands[0]['body_span'] < cands[0]['body_span']):
+                cands = wild_cands
+    if not cands:
+        raise ValueError(
+            f"No scalar-run configuration found for {root_name} {scale_name}"
+        )
+    idx = choose if 0 <= choose < len(cands) else 0
+    return cands[idx]['string_configs'], cands[idx]['pattern']
+
+
 def render(pattern: dict, label: str = "", width: int = 20,
-           string_configs: dict = None) -> str:
+           string_configs: dict = None, show_tuning: bool = True) -> str:
     """Render a {string: tuple_of_frets} pattern as a fretboard-faithful diagram.
 
     Every fret is rendered as a single digit equal to fret % 10.
@@ -1132,36 +1679,45 @@ def render(pattern: dict, label: str = "", width: int = 20,
       0    -> '0' (nut position — same as default)
       N    -> str(N) (capo at fret N)
     Strings absent from string_configs use '0' (normal, nut position).
+
+    show_tuning prepends a `Tuning: <letters>` header line above the strings.
+    `render_full_set` and other composers pass show_tuning=False on inner
+    renders and emit one header for the whole chart.
     """
     shift = _max_capo(string_configs)
+    pattern = _normalize_string_configs(pattern)
 
     if pattern:
-        max_fret = max(max(p) for p in pattern.values())
+        max_fret = max((max(p) for p in pattern.values() if p), default=shift)
         needed = (max_fret - shift) + 4
         if width < needed:
             width = needed
 
+    cfg = _normalize_string_configs(string_configs)
     lines = []
-    for s in STRING_ORDER_DISPLAY:
-        if string_configs and s in string_configs and string_configs[s] is None:
+    for pos in STRING_ORDER_DISPLAY:
+        letter = STRING_NOTES[pos]
+        if cfg and pos in cfg and cfg[pos] is None:
             chars = ['-'] * width
             chars[0] = ' '
-            lines.append(f"{s}X" + ''.join(chars) + "|")
+            lines.append(f"{letter}X" + ''.join(chars) + "|")
             continue
 
         config_char = '0'
-        if string_configs and s in string_configs:
-            val = string_configs[s]
+        if cfg and pos in cfg:
+            val = cfg[pos]
             config_char = val if val in ('X', '|') else str(val)
 
-        frets = pattern[s]
+        frets = pattern.get(pos, ()) if pattern else ()
         chars = ['-'] * width
         chars[0] = ' '
         for f in frets:
             col = f - shift
             chars[col] = str(f % 10)
-        lines.append(f"{s}{config_char}" + ''.join(chars) + "|")
+        lines.append(f"{letter}{config_char}" + ''.join(chars) + "|")
 
+    if show_tuning:
+        lines.insert(0, f"Tuning: {tuning_label()}")
     out = '\n'.join(lines)
     if label:
         out += f"  {label}"
@@ -1265,6 +1821,67 @@ def generate_arpeggio_and_render(root_name: str, scale_name: str,
     return diagram
 
 
+def generate_scalar_run_and_render(root_name: str, scale_name: str, *,
+                                   label: str = None,
+                                   max_capo: int = 5, max_distinct_capos: int = 2,
+                                   max_step: int = 2,
+                                   allow_one_minor_third: bool = True,
+                                   allow_one_wild_jump: bool = False,
+                                   wild_jump_span_threshold: int = 3,
+                                   max_body_span: int = 7,
+                                   fret_max: int = 22,
+                                   choose: int = 0,
+                                   width: int = 20) -> str:
+    """One-shot: choose a scalar-run capo + fingering combo and render the
+    diagram, verified. The upper five strings ascend stepwise; the lowest
+    string sounds beneath as a bass pedal. Defaults to tiered selection:
+    prefer the m3-budget result, escalate to a wild jump only when the m3
+    result's body span exceeds `wild_jump_span_threshold` (default 3).
+    See `generate_scalar_run` for details."""
+    string_configs, pattern = generate_scalar_run(
+        root_name, scale_name,
+        max_capo=max_capo, max_distinct_capos=max_distinct_capos,
+        max_step=max_step, allow_one_minor_third=allow_one_minor_third,
+        allow_one_wild_jump=allow_one_wild_jump,
+        wild_jump_span_threshold=wild_jump_span_threshold,
+        max_body_span=max_body_span,
+        fret_max=fret_max, choose=choose,
+    )
+    _validate_capo_count(string_configs)
+    if label is None:
+        label = f"{root_name} {scale_name.replace('_', ' ').title()} run"
+    diagram = render(pattern, label, width=width, string_configs=string_configs)
+    if not verify(diagram, root_name, scale_name, label):
+        raise RuntimeError(f"Scalar-run diagram failed verification: {label}")
+    return diagram
+
+
+def generate_cluster_and_render(root_name: str, scale_name: str, *,
+                                label: str = None,
+                                max_capo: int = 4, max_distinct_capos: int = 2,
+                                body_notes_per_string: int = 0,
+                                choose: int = 0,
+                                width: int = 20) -> str:
+    """One-shot: pick a cluster-of-seconds capo configuration and render it,
+    verified. The capo positions retune the open strings so that their pitch
+    classes span six adjacent scale-degrees, producing a stacked-seconds
+    chord when strummed. Body notes (optional) extend the scale upward.
+    """
+    string_configs, pattern = generate_cluster(
+        root_name, scale_name,
+        max_capo=max_capo, max_distinct_capos=max_distinct_capos,
+        body_notes_per_string=body_notes_per_string,
+        choose=choose,
+    )
+    _validate_capo_count(string_configs)
+    if label is None:
+        label = f"{root_name} {scale_name.replace('_', ' ').title()} cluster"
+    diagram = render(pattern, label, width=width, string_configs=string_configs)
+    if not verify(diagram, root_name, scale_name, label):
+        raise RuntimeError(f"Cluster diagram failed verification: {label}")
+    return diagram
+
+
 class _FullSetResult(dict):
     """Dict subclass returned by generate_full_set. Carries metadata
     (root_name, scale_name, string_configs) on the instance so render_full_set
@@ -1325,7 +1942,7 @@ def generate_full_set(root_name: str, scale_name: str,
                             require_root_on_low_e=True)
         if pat is None:
             raise RuntimeError(f"Could not generate 2NPS at fret {start}")
-        diagram = render(pat, label="", width=width, string_configs=cfg)
+        diagram = render(pat, label="", width=width, string_configs=cfg, show_tuning=False)
         if not verify(diagram, root_name, scale_name):
             raise RuntimeError(f"2NPS verification failed at fret {start}")
         return diagram
@@ -1336,7 +1953,7 @@ def generate_full_set(root_name: str, scale_name: str,
                             require_root_on_low_e=True)
         if pat is None:
             raise RuntimeError(f"Could not generate 3NPS at fret {start}")
-        diagram = render(pat, label="", width=width, string_configs=cfg)
+        diagram = render(pat, label="", width=width, string_configs=cfg, show_tuning=False)
         if not verify(diagram, root_name, scale_name):
             raise RuntimeError(f"3NPS verification failed at fret {start}")
         return diagram
@@ -1348,7 +1965,7 @@ def generate_full_set(root_name: str, scale_name: str,
                                 require_root_on_low_e=True)
         if pat is None:
             raise RuntimeError(f"Could not generate arpeggio at fret {start}")
-        diagram = render(pat, label="", width=width, string_configs=cfg)
+        diagram = render(pat, label="", width=width, string_configs=cfg, show_tuning=False)
         if not verify(diagram, root_name, scale_name):
             raise RuntimeError(f"Arpeggio verification failed at fret {start}")
         return diagram
@@ -1358,7 +1975,29 @@ def generate_full_set(root_name: str, scale_name: str,
     # All stay within the scale's finger-reach cap (a minor 3rd, or a major 3rd
     # for scales with no minor 3rd such as whole-tone).
     cap = effective_finger_step(scale_name)
-    two_note = [
+
+    def _diagram_is_degenerate(diagram):
+        """A variant is degenerate when its picker collapsed and most
+        sounding strings end up with the same set of body-note pitch
+        classes — musically that means most strings play the same notes
+        in different octaves, which defeats the purpose of varying the
+        2NPS / 3NPS shape. Common with sparse scales (pentatonics) and
+        the wide stretch profile, where only one m3 pair exists.
+
+        Threshold: True if **5 or more** sounding strings share an
+        identical pitch-class set (out of typically 6). A 4/6 share is
+        common in legitimate alternating patterns; 5/6 is collapse."""
+        per_string_pcs = {}
+        for pos, fret, _col in parse_diagram(diagram):
+            per_string_pcs.setdefault(pos, set()).add(
+                (OPEN_STRINGS[pos] + fret) % 12)
+        if len(per_string_pcs) < 3:
+            return False
+        from collections import Counter
+        counts = Counter(frozenset(s) for s in per_string_pcs.values())
+        return counts.most_common(1)[0][1] >= 5
+
+    two_note_raw = [
         ('tight (m2)',
          make_2nps(base, 0, 2, STRETCH_PROFILES['tight'], 'up', 0)),
         ('wide',
@@ -1372,12 +2011,42 @@ def generate_full_set(root_name: str, scale_name: str,
         ('fast climbing',
          make_2nps(base, 0, cap, None, 'fast_climb', 0)),
     ]
+    # Drop variants where the picker collapsed (every string plays the
+    # same notes — common on sparse pentatonic scales when "wide" is the
+    # requested stretch). Always keep at least 'tight (m2)' even if it
+    # collapses, so the user has something to anchor on.
+    two_note = []
+    for i, (label, diag) in enumerate(two_note_raw):
+        if i > 0 and _diagram_is_degenerate(diag):
+            continue
+        two_note.append((label, diag))
 
-    three_note = [
-        (f'3NPS pos {base}',     make_3nps(base)),
-        (f'3NPS pos {base + 3}', make_3nps(base + 3)),
-        (f'3NPS pos {base + 5}', make_3nps(base + 5)),
-    ]
+    # Try a spread of start_frets and keep up to three DISTINCT 3NPS
+    # patterns. With high spider-capo configs the picker can collapse to
+    # the same shape across nearby start_frets (e.g. when the root-on-low-E
+    # constraint forces the bass note to a single fret regardless of base),
+    # so naively picking base, base+3, base+5 may yield duplicates. Walk a
+    # wider range, dedupe by pattern equality, and fall back to whatever
+    # unique positions exist (1, 2, or 3 — not more than 3).
+    candidate_starts = [base, base + 3, base + 5,
+                        base + 2, base + 7, base - 1, base + 10, base + 12]
+    seen_diagrams = set()
+    three_note = []
+    for start in candidate_starts:
+        if start < 1 or start > 22 or len(three_note) >= 3:
+            continue
+        diag = make_3nps(start)
+        if diag is None or diag in seen_diagrams:
+            continue
+        if _diagram_is_degenerate(diag):
+            # Sparse scales (pentatonics) can force the 3NPS picker into
+            # one tight consecutive-scale-tone triple on every string,
+            # producing musically identical content at every fret. Drop
+            # the candidate; if all candidates are degenerate the section
+            # ends up empty, which is honest about the scale's geometry.
+            continue
+        seen_diagrams.add(diag)
+        three_note.append((f'3NPS pos {start}', diag))
 
     # Two arpeggio voicings at different neck positions. Both use the
     # diatonic 7th chord (1-3-5-7); the picker chooses the closest chord-tone
@@ -1442,7 +2111,8 @@ def render_full_set(full_set: dict, gap: int = 4) -> str:
         if full_set.get(key):
             sections.append(render_row(full_set[key],
                                        with_chords=(key == 'arpeggio')))
-    return '\n\n'.join(sections)
+    body = '\n\n'.join(sections)
+    return f"Tuning: {tuning_label()}\n{body}" if body else body
 
 
 def side_by_side(left: str, left_label: str,
