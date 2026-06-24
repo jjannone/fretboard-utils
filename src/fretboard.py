@@ -889,6 +889,20 @@ FAVORITE_CAPOS = {
         'scales': [('D', 'natural_minor'), ('D', 'phrygian'),
                    ('F', 'major'), ('G', 'dorian')],
     },
+    # All-fourths (EADGCF) with capos `0 2 0 1 1 2` (low-to-high). Drones
+    # spell E B D G♯ C♯ G — six distinct pitches covering 6 of the 7 tones
+    # of E hungarian major (1 ♭3 3 ♯4 5 6 ♭7), missing only the ♯4 (A♯)
+    # which becomes the diagnostic melodic target. The simultaneous ♭3
+    # (G) and 3 (G♯) in the drone are the gypsy/hungarian-major fingerprint.
+    'fourths_e_hungarian_major': {
+        'tuning': 'guitar_fourths',
+        'pattern': '0 2 0 1 1 2',
+        'string_configs': {1: 2, 3: 1, 4: 1, 5: 2},
+        'drones': 'E B D G# C# G',
+        'feel': 'E Hungarian major drone (♭3 alongside 3 — gypsy colour)',
+        'scales': [('E', 'hungarian_major'), ('E', 'hungarian_minor'),
+                   ('E', 'phrygian_dominant')],
+    },
 }
 
 
