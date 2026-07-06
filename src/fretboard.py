@@ -682,11 +682,17 @@ STRETCH_PROFILES = _build_stretch_profiles(STRING_ORDER_LOW_TO_HIGH)
 
 # Instrument tunings: (low-to-high string order, {string letter: open pitch class}).
 # 'guitar' is the module default; 'bass_6' is a 6-string bass tuned BEADGC.
+# 'guitar_8' is an 8-string guitar tuned G# C# F# B E A D G (low to high).
+#   String identifiers use lowercase for sharped strings (g=G#, c=C#, f=F#),
+#   uppercase for natural strings (B, E, A, D, G) — same convention as 6-string
+#   e (high e) vs E (low E).
 _TUNING_PRESETS = {
     'guitar': (['E', 'A', 'D', 'G', 'B', 'e'],
                {'E': 4, 'A': 9, 'D': 2, 'G': 7, 'B': 11, 'e': 4}),
     'bass_6': (['B', 'E', 'A', 'D', 'G', 'C'],
                {'B': 11, 'E': 4, 'A': 9, 'D': 2, 'G': 7, 'C': 0}),
+    'guitar_8': (['g', 'c', 'f', 'B', 'E', 'A', 'D', 'G'],
+                 {'g': 8, 'c': 1, 'f': 6, 'B': 11, 'E': 4, 'A': 9, 'D': 2, 'G': 7}),
 }
 
 
@@ -699,9 +705,10 @@ def use_tuning(name: str):
     the with-block, then restores them. The module default is 6-string guitar,
     so existing callers are unaffected.
 
-    Presets: 'guitar' (EADGBe) and 'bass_6' (BEADGC, low B to high C). Inside
-    the block, the "root on the lowest string" constraint targets that tuning's
-    lowest string (B for bass, E for guitar).
+    Presets: 'guitar' (EADGBe), 'bass_6' (BEADGC, low B to high C), and
+    'guitar_8' (G# C# F# B E A D G, low to high). Inside the block, the "root
+    on the lowest string" constraint targets that tuning's lowest string
+    (g=G# for guitar_8, B for bass_6, E for guitar).
     """
     global OPEN_STRINGS, STRING_ORDER_LOW_TO_HIGH, STRING_ORDER_DISPLAY
     global DIAGRAM_LINE_RE, STRETCH_PROFILES
