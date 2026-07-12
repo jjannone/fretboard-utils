@@ -40,6 +40,33 @@ OPEN_STRINGS = {
 }
 
 NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+FLAT_NAMES  = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B']
+
+# Flat-spelled root names that are absent from NOTE_NAMES
+_FLAT_ROOT_PCS = {name: i for i, name in enumerate(FLAT_NAMES) if name not in NOTE_NAMES}
+# Keys whose scales are conventionally written with flats
+_FLAT_KEY_ROOTS = frozenset(_FLAT_ROOT_PCS) | {'F'}
+
+
+def _parse_root(root_name: str) -> tuple:
+    """Return (pitch_class, prefer_flats) for a root name.
+
+    Accepts sharps ('G#', 'C#') and flats ('Ab', 'Bb', 'Db', 'Eb', 'Gb').
+    prefer_flats is True when the root conventionally uses flat notation (F
+    and all flat-spelled roots).
+    """
+    if root_name in NOTE_NAMES:
+        return NOTE_NAMES.index(root_name), root_name in _FLAT_KEY_ROOTS
+    if root_name in _FLAT_ROOT_PCS:
+        return _FLAT_ROOT_PCS[root_name], True
+    raise ValueError(
+        f"Unknown root: {root_name!r}. Use sharps (C, C#, D, …) or flats (Db, Eb, Gb, Ab, Bb)."
+    )
+
+
+def _pc_name(pc: int, prefer_flats: bool = False) -> str:
+    """Pitch class → note name, sharp or flat spelling."""
+    return FLAT_NAMES[pc] if prefer_flats else NOTE_NAMES[pc]
 
 STRING_ORDER_LOW_TO_HIGH = ['E', 'A', 'D', 'G', 'B', 'e']
 STRING_ORDER_DISPLAY = ['e', 'B', 'G', 'D', 'A', 'E']  # high to low for rendering
@@ -117,9 +144,7 @@ def scale_pitches(root_name: str, scale_name: str) -> set:
     """Return set of pitch classes (0-11) in the scale."""
     if scale_name not in SCALES:
         raise ValueError(f"Unknown scale: {scale_name}. Known: {list(SCALES)}")
-    if root_name not in NOTE_NAMES:
-        raise ValueError(f"Unknown root: {root_name}. Use one of {NOTE_NAMES}")
-    root = NOTE_NAMES.index(root_name)
+    root, _ = _parse_root(root_name)
     return {(root + i) % 12 for i in SCALES[scale_name]}
 
 
@@ -394,12 +419,10 @@ DEGREE_LABEL = {
 
 def scale_spelling(root_name: str, scale_name: str) -> list:
     """Return the note names of the scale, in degree order (1, 2, 3, ...)."""
-    if root_name not in NOTE_NAMES:
-        raise ValueError(f"Unknown root: {root_name}")
     if scale_name not in SCALES:
         raise ValueError(f"Unknown scale: {scale_name}")
-    root = NOTE_NAMES.index(root_name)
-    return [NOTE_NAMES[(root + i) % 12] for i in SCALES[scale_name]]
+    root, prefer_flats = _parse_root(root_name)
+    return [_pc_name((root + i) % 12, prefer_flats) for i in SCALES[scale_name]]
 
 
 def scale_degree_labels(scale_name: str) -> list:
@@ -452,10 +475,11 @@ def chord_name(root_name: str, scale_name: str, degrees=(1, 3, 5)) -> str:
     return f"{root_name}{sep}{suffix}"
 
 
-def capo_summary(string_configs: dict) -> str:
+def capo_summary(string_configs: dict, prefer_flats: bool = False) -> str:
     """Describe capos and the drone notes they produce, e.g.:
-       'capo 1 on A,G (→A♯,G♯); capo 4 on B (→D♯)'.
+       'capo 1 on A,G (→Bb,Ab); capo 4 on B (→Eb)'.
        Returns 'no capo' when there are no spider capos.
+       Pass prefer_flats=True when the key uses flat notation.
     """
     if not string_configs:
         return 'no capo'
@@ -468,8 +492,7 @@ def capo_summary(string_configs: dict) -> str:
     parts = []
     for fret in sorted(by_fret):
         strings = by_fret[fret]
-        notes = [NOTE_NAMES[(OPEN_STRINGS[s] + fret) % 12] for s in strings]
-        # Replace ASCII '#' with '♯' for display
+        notes = [_pc_name((OPEN_STRINGS[s] + fret) % 12, prefer_flats) for s in strings]
         notes = [n.replace('#', '♯') for n in notes]
         parts.append(f"capo {fret} on {','.join(strings)} (→{','.join(notes)})")
     return '; '.join(parts)
@@ -490,6 +513,7 @@ def drone_label(string_name: str, string_configs: dict,
     scale_name is retained for signature stability (the interval label does not
     depend on the scale).
     """
+    root, prefer_flats = _parse_root(root_name)
     drone = _drone_pc(string_name, string_configs)
     open_pc = OPEN_STRINGS[string_name]
     is_muted = (string_configs and string_name in string_configs and
@@ -498,9 +522,8 @@ def drone_label(string_name: str, string_configs: dict,
         if is_muted:
             drone = open_pc % 12
         else:
-            return f"{NOTE_NAMES[open_pc]}(?)"
-    note = NOTE_NAMES[drone]
-    root = NOTE_NAMES.index(root_name)
+            return f"{_pc_name(open_pc, prefer_flats)}(?)"
+    note = _pc_name(drone, prefer_flats)
     interval = (drone - root) % 12
     return f"{note}({DEGREE_LABEL[interval]})"
 
@@ -561,7 +584,8 @@ _CHORD_TYPE_NAMES = {
 
 
 def per_string_chord(string_name: str, body_frets: list,
-                     string_configs: dict = None) -> str:
+                     string_configs: dict = None,
+                     prefer_flats: bool = False) -> str:
     """Return a chord label like 'EΔ7 (157)' for drone + body notes on a string.
 
     Recognises **triads and 7th chords only** (including their dyad fragments
@@ -586,7 +610,7 @@ def per_string_chord(string_name: str, body_frets: list,
     pcs = sorted(set([drone, *body_pcs]), key=lambda p: (p - drone) % 12)
     intervals = tuple((p - drone) % 12 for p in pcs)
 
-    drone_name = NOTE_NAMES[drone]
+    drone_name = _pc_name(drone, prefer_flats)
     deg_str = ''.join(DEGREE_LABEL[iv] for iv in intervals)
     suffix = _CHORD_TYPE_NAMES.get(intervals)
     if suffix is None:
@@ -607,6 +631,7 @@ def decorate(diagram: str, root_name: str, scale_name: str,
     `parse_diagram` because the leading string letter is replaced. Always run
     `verify` (or any parse-based check) on the raw diagram BEFORE decorating.
     """
+    _, prefer_flats = _parse_root(root_name)
     drone_labels = {s: drone_label(s, string_configs, root_name, scale_name)
                     for s in STRING_ORDER_DISPLAY}
     label_width = max(len(lbl) for lbl in drone_labels.values()) + 2
@@ -616,7 +641,8 @@ def decorate(diagram: str, root_name: str, scale_name: str,
         for s, fret, _col in parse_diagram(diagram):
             notes_by_string.setdefault(s, []).append(fret)
         chord_labels = {s: per_string_chord(s, notes_by_string.get(s, []),
-                                             string_configs)
+                                             string_configs,
+                                             prefer_flats=prefer_flats)
                         for s in STRING_ORDER_DISPLAY}
         chord_width = max(len(c) for c in chord_labels.values())
 
@@ -645,11 +671,9 @@ def chord_tones(root_name: str, scale_name: str,
     major in major-like scales, minor in minor-like scales, diminished in
     locrian, augmented in augmented, etc. degrees=(1, 3, 5, 7) adds the seventh.
     """
-    if root_name not in NOTE_NAMES:
-        raise ValueError(f"Unknown root: {root_name}")
     if scale_name not in SCALES:
         raise ValueError(f"Unknown scale: {scale_name}")
-    root = NOTE_NAMES.index(root_name)
+    root, _ = _parse_root(root_name)
     intervals = SCALES[scale_name]
     out = set()
     for d in degrees:
@@ -777,7 +801,7 @@ def generate_2nps(root_name: str, scale_name: str, start_fret: int = 3,
         max_stretch = cap
     if pitches is None:
         pitches = scale_pitches(root_name, scale_name)
-    root_pc = NOTE_NAMES.index(root_name)
+    root_pc, _ = _parse_root(root_name)
     fret_floor = _effective_fret_min(string_configs)
     pattern = {}
     prev_low = max(start_fret, fret_floor)
@@ -885,7 +909,7 @@ def generate_3nps(root_name: str, scale_name: str, start_fret: int = 3,
         max_step = cap
     if pitches is None:
         pitches = scale_pitches(root_name, scale_name)
-    root_pc = NOTE_NAMES.index(root_name)
+    root_pc, _ = _parse_root(root_name)
     fret_floor = _effective_fret_min(string_configs)
     pattern = {}
     lowest = STRING_ORDER_LOW_TO_HIGH[0]
@@ -989,7 +1013,7 @@ def generate_arpeggio(root_name: str, scale_name: str, start_fret: int = 3,
     if max_stretch is None:
         max_stretch = effective_finger_step(scale_name)
     pitches = scale_pitches(root_name, scale_name)
-    root_pc = NOTE_NAMES.index(root_name)
+    root_pc, _ = _parse_root(root_name)
     fret_floor = _effective_fret_min(string_configs)
     pattern = {}
 

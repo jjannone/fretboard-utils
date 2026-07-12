@@ -44,7 +44,11 @@ below already exist in [src/fretboard.py](src/fretboard.py). Use them.
 ### Constants and tables
 - `OPEN_STRINGS` — dict mapping string letter to open pitch class (the *active*
   tuning; guitar EADGBe by default).
-- `NOTE_NAMES` — 12 sharps-only note names.
+- `NOTE_NAMES` — 12 sharps-only note names. `FLAT_NAMES` — same 12 notes in flat spelling.
+- `_parse_root(root_name)` → `(pitch_class, prefer_flats)` — accepts both `'G#'` and `'Ab'`.
+  All public functions accept flat roots; output uses flat notation automatically when the root
+  conventionally uses flats (F, Bb, Eb, Ab, Db, Gb). `capo_summary` takes an optional
+  `prefer_flats=True` parameter for consistent notation.
 - `STRING_ORDER_LOW_TO_HIGH`, `STRING_ORDER_DISPLAY` — string letter orderings
   (also reflect the active tuning).
 - `SCALES` — dict of scale name → list of intervals from root.
