@@ -44,7 +44,11 @@ below already exist in [src/fretboard.py](src/fretboard.py). Use them.
 ### Constants and tables
 - `OPEN_STRINGS` — dict mapping string letter to open pitch class (the *active*
   tuning; guitar EADGBe by default).
-- `NOTE_NAMES` — 12 sharps-only note names.
+- `NOTE_NAMES` — 12 sharps-only note names. `FLAT_NAMES` — same 12 notes in flat spelling.
+- `_parse_root(root_name)` → `(pitch_class, prefer_flats)` — accepts both `'G#'` and `'Ab'`.
+  All public functions accept flat roots; output uses flat notation automatically when the root
+  conventionally uses flats (F, Bb, Eb, Ab, Db, Gb). `capo_summary` takes an optional
+  `prefer_flats=True` parameter for consistent notation.
 - `STRING_ORDER_LOW_TO_HIGH`, `STRING_ORDER_DISPLAY` — string letter orderings
   (also reflect the active tuning).
 - `SCALES` — dict of scale name → list of intervals from root.
@@ -59,10 +63,49 @@ below already exist in [src/fretboard.py](src/fretboard.py). Use them.
   instrument, wrap the calls in `with use_tuning(name): …`. This temporarily
   rebinds the tuning globals (`OPEN_STRINGS`, the string orders, the line regex,
   `STRETCH_PROFILES`) and restores them on exit.
-- Presets: `'guitar'` (EADGBe), `'bass_6'` (BEADGC, low B to high C).
+- Presets: `'guitar'` (EADGBe), `'bass_6'` (BEADGC, low B to high C),
+  `'guitar_8'` (G# C# F# B E A D G, low to high — the user's regular instrument).
 - Inside a tuning block, "root on the lowest string" targets that tuning's lowest
-  string (B for `bass_6`, E for guitar). String letters may differ (bass adds a
-  low `B` and high `C`); all helpers key off the active `OPEN_STRINGS`.
+  string (`g`=G# for `guitar_8`, B for `bass_6`, E for guitar). String letters
+  may differ; all helpers key off the active `OPEN_STRINGS`.
+
+### 8-string guitar — `'guitar_8'` (user's regular instrument)
+
+Tuning: **G# C# F# B E A D G** (low → high). Use with `with use_tuning('guitar_8'): …`.
+
+**String identifiers** (same lowercase-for-sharped convention as 6-string `e` vs `E`):
+
+| Letter | Open pitch | Position |
+|--------|-----------|----------|
+| `g` | G# | lowest (string 1) |
+| `c` | C# | string 2 |
+| `f` | F# | string 3 |
+| `B` | B  | string 4 |
+| `E` | E  | string 5 |
+| `A` | A  | string 6 |
+| `D` | D  | string 7 |
+| `G` | G  | highest (string 8) |
+
+Display order (high → low for tabs): `G D A E B f c g`
+
+**Harmonic properties of the open tuning:**
+- Open strings {G#, C#, F#, B, E, A, D, G} already contain {C#, F#, E, A} = F#m7 subset (strings `c`, `f`, `E`, `A`).
+- The four non-F#m7 strings (G#, B, D, G) can be resolved to F#m7 tones with just two spider capo frets.
+
+**Established spider capo setups (do not re-derive):**
+
+*Part I / F#m7 full saturation* — all 8 strings drone F#m7 = {F#, A, C#, E}:
+- Capo A fret 1: `g` only (G# → A)
+- Capo B fret 2: `B`, `D`, `G` (B → C#, D → E, G → A)
+- Result: A C# F# C# E A E A
+
+*Part II / F#7 field* — 6 strings drone F#7 = {F#, A#, C#, E}; `D` and `G` strings are color tones:
+- Capo A fret 1: `A` only (A → A#)
+- Capo B fret 2: `g`, `B` (G# → A#, B → C#)
+- `E` string stays open (E drones freely as the ♭7 of F#7 and bass of any Edim)
+- Result: A# C# F# C# E A# D G
+- Bonus: open `G` string drones G (an Edim tone); open `E` + capoed `g`/`A` strings
+  give all three Edim tones {E, G, B♭} as open drones — no fretting required to access Edim.
 
 ### Pitch math
 - `scale_pitches(root, scale)` → set of pitch classes in the scale. Use to test scale membership.
