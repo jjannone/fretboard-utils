@@ -687,6 +687,9 @@ _TUNING_PRESETS = {
                {'E': 4, 'A': 9, 'D': 2, 'G': 7, 'B': 11, 'e': 4}),
     'bass_6': (['B', 'E', 'A', 'D', 'G', 'C'],
                {'B': 11, 'E': 4, 'A': 9, 'D': 2, 'G': 7, 'C': 0}),
+    # All-fourths guitar: E A D G C F (replaces the G-B major third with a P4)
+    'guitar_4ths': (['E', 'A', 'D', 'G', 'C', 'f'],
+                    {'E': 4, 'A': 9, 'D': 2, 'G': 7, 'C': 0, 'f': 5}),
 }
 
 
