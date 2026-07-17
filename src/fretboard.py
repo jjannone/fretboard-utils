@@ -492,10 +492,11 @@ def drone_label(string_name: str, string_configs: dict,
     """
     drone = _drone_pc(string_name, string_configs)
     open_pc = OPEN_STRINGS[string_name]
-    is_muted = (string_configs and string_name in string_configs and
-                string_configs[string_name] == 'X')
+    no_drone_config = {'X', '|'}
+    is_no_drone = (string_configs and string_name in string_configs and
+                   string_configs[string_name] in no_drone_config)
     if drone is None:
-        if is_muted:
+        if is_no_drone:
             drone = open_pc % 12
         else:
             return f"{NOTE_NAMES[open_pc]}(?)"
@@ -1138,8 +1139,9 @@ def render(pattern: dict, label: str = "", width: int = 20,
     """
     shift = _max_capo(string_configs)
 
-    if pattern:
-        max_fret = max(max(p) for p in pattern.values())
+    non_empty = [p for p in pattern.values() if p]
+    if non_empty:
+        max_fret = max(max(p) for p in non_empty)
         needed = (max_fret - shift) + 4
         if width < needed:
             width = needed
@@ -1449,155 +1451,61 @@ def render_full_set(full_set: dict, gap: int = 4) -> str:
 
 
 def render_single_string(root_name: str, scale_name: str, string: str,
-                         fret_min: int = 1, fret_max: int = 19) -> str:
-    """Render all in-scale frets on one string as a compact tab line.
+                         fret_min: int = 7, fret_max: int = 19) -> str:
+    """Show all in-scale frets on one string using the standard 6-string tab format.
 
-    Returns two lines: a tab line with fret numbers and a degree-label row
-    aligned below each fret.  Fret numbers are always decimal (no
-    single-character encoding), so two-digit frets are unambiguous.
-
-    Example output::
-
-        D |-7-8-10-11-13-15-17-|   A Altered
-           1 ♭2  ♭3  3 ♯4  ♯5 ♭7
+    All other strings are muted (X) so the target string's notes read cleanly
+    against the normal string grid.  The diagram is decorated with drone labels
+    and verified before returning.
     """
     if string not in OPEN_STRINGS:
         raise ValueError(f"Unknown string {string!r}; known: {list(OPEN_STRINGS)}")
-    root_pc = NOTE_NAMES.index(root_name)
     pitches = scale_pitches(root_name, scale_name)
-    in_scale = sorted(f for f in range(fret_min, fret_max + 1)
-                      if pitch_at(string, f) in pitches)
+    in_scale = tuple(f for f in range(fret_min, fret_max + 1)
+                     if pitch_at(string, f) in pitches)
     if not in_scale:
-        return (f"{string} |-{'--' * (fret_max - fret_min + 1)}-|"
-                f"   (no {root_name} {scale_name} tones in frets {fret_min}-{fret_max})")
-
-    cells = []
-    for f in in_scale:
-        semi = (pitch_at(string, f) - root_pc) % 12
-        deg = DEGREE_LABEL[semi]
-        w = max(len(str(f)), len(deg))
-        cells.append((f, deg, w))
-
-    tab_parts = [f'{string} |-']
-    deg_parts = [' ' * (len(string) + 3)]
-    for i, (f, deg, w) in enumerate(cells):
-        tab_parts.append(str(f).ljust(w))
-        deg_parts.append(deg.ljust(w))
-        sep = '-' if i < len(cells) - 1 else ''
-        tab_parts.append(sep)
-        deg_parts.append(' ' if sep else '')
-    tab_parts.append('-|')
-    deg_parts.append('')
-
-    scale_label = f'{root_name} {scale_name.replace("_", " ").title()}'
-    tab_line = ''.join(tab_parts)
-    deg_line = ''.join(deg_parts)
-    return f'{tab_line}   {scale_label}\n{deg_line}'
+        raise ValueError(
+            f"No {root_name} {scale_name} tones on {string} string "
+            f"between frets {fret_min} and {fret_max}"
+        )
+    string_configs = {s: 'X' for s in OPEN_STRINGS}
+    string_configs[string] = '|'
+    pattern = {s: () for s in OPEN_STRINGS}
+    pattern[string] = in_scale
+    scale_label = scale_name.replace('_', ' ').title()
+    label = f'{root_name} {scale_label} — {string} string'
+    diagram = render(pattern, label, string_configs=string_configs)
+    return decorate(diagram, root_name, scale_name, string_configs)
 
 
 def render_dual_string(root_name: str, scale_name: str,
                        string_lo: str, string_hi: str,
-                       fret_min: int = 1, fret_max: int = 14) -> str:
-    """Render in-scale frets on two adjacent strings in a shared fret window.
+                       fret_min: int = 7, fret_max: int = 19) -> str:
+    """Show in-scale frets on two strings using the standard 6-string tab format.
 
-    Both strings are shown as a grid where every column is one fret.  In-scale
-    positions show the fret number; others show dashes.  A fret-number ruler
-    and degree rows are printed beneath each string line.
-
-    Example output::
-
-        G |--10-11------------|   C(♭3) C#(3)
-        D |-7--8--10-11-------|   A(1)  A#(♭2) C(♭3) C#(3)
-             7  8  9 10 11 12
+    All other strings are muted (X).  Each of the two active strings shows
+    every in-scale fret in [fret_min, fret_max].  The diagram is decorated
+    with drone labels and verified before returning.
     """
     for s in (string_lo, string_hi):
         if s not in OPEN_STRINGS:
             raise ValueError(f"Unknown string {s!r}; known: {list(OPEN_STRINGS)}")
-    root_pc = NOTE_NAMES.index(root_name)
     pitches = scale_pitches(root_name, scale_name)
 
-    frets = list(range(fret_min, fret_max + 1))
+    def in_scale_frets(s):
+        return tuple(f for f in range(fret_min, fret_max + 1)
+                     if pitch_at(s, f) in pitches)
 
-    def fret_info(string):
-        result = {}
-        for f in frets:
-            if pitch_at(string, f) in pitches:
-                semi = (pitch_at(string, f) - root_pc) % 12
-                result[f] = (str(f), DEGREE_LABEL[semi])
-        return result
-
-    lo_info = fret_info(string_lo)
-    hi_info = fret_info(string_hi)
-
-    # Column width per fret: wide enough for fret number and both degree labels.
-    # Minimum 2 so consecutive in-scale frets don't run together visually.
-    col_w = {}
-    for f in frets:
-        w = max(2, len(str(f)))
-        if f in lo_info:
-            w = max(w, len(lo_info[f][1]))
-        if f in hi_info:
-            w = max(w, len(hi_info[f][1]))
-        col_w[f] = w
-
-    prefix_lo = f'{string_lo} |-'
-    prefix_hi = f'{string_hi} |-'
-    prefix_ruler = ' ' * len(prefix_lo)
-
-    def build_string_line(info, prefix):
-        parts = [prefix]
-        for f in frets:
-            w = col_w[f]
-            if f in info:
-                parts.append(info[f][0].ljust(w))
-            else:
-                parts.append('-' * w)
-        parts.append('-|')
-        return ''.join(parts)
-
-    def build_deg_line(info, prefix_len):
-        parts = [' ' * prefix_len]
-        for f in frets:
-            w = col_w[f]
-            if f in info:
-                parts.append(info[f][1].ljust(w))
-            else:
-                parts.append(' ' * w)
-        return ''.join(parts).rstrip()
-
-    def build_ruler(prefix):
-        parts = [prefix]
-        for f in frets:
-            w = col_w[f]
-            parts.append(str(f).ljust(w))
-        return ''.join(parts).rstrip()
-
-    def note_summary(string, info):
-        return '  '.join(
-            f'{note_name(string, f)}({info[f][1]})' for f in sorted(info)
-        )
-
-    scale_label = f'{root_name} {scale_name.replace("_", " ").title()}'
-
-    hi_line = build_string_line(hi_info, prefix_hi)
-    lo_line = build_string_line(lo_info, prefix_lo)
-    hi_deg  = build_deg_line(hi_info, len(prefix_hi))
-    lo_deg  = build_deg_line(lo_info, len(prefix_lo))
-    ruler   = build_ruler(prefix_ruler)
-
-    hi_summary = note_summary(string_hi, hi_info) if hi_info else '(none)'
-    lo_summary = note_summary(string_lo, lo_info) if lo_info else '(none)'
-
-    lines = [
-        f'{scale_label}  [{string_hi} string]  {hi_summary}',
-        hi_line,
-        hi_deg,
-        f'[{string_lo} string]  {lo_summary}',
-        lo_line,
-        lo_deg,
-        ruler,
-    ]
-    return '\n'.join(lines)
+    string_configs = {s: 'X' for s in OPEN_STRINGS}
+    string_configs[string_lo] = '|'
+    string_configs[string_hi] = '|'
+    pattern = {s: () for s in OPEN_STRINGS}
+    pattern[string_lo] = in_scale_frets(string_lo)
+    pattern[string_hi] = in_scale_frets(string_hi)
+    scale_label = scale_name.replace('_', ' ').title()
+    label = f'{root_name} {scale_label} — {string_lo}+{string_hi} strings'
+    diagram = render(pattern, label, string_configs=string_configs)
+    return decorate(diagram, root_name, scale_name, string_configs)
 
 
 def side_by_side(left: str, left_label: str,
